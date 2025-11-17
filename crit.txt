@@ -1,0 +1,405 @@
+--[[
+    ═══════════════════════════════════════════════════
+         ROBLOX MAP ANALYZER - ALL IN ONE
+         Compatible: Delta Android
+         Version: 1.0
+    ═══════════════════════════════════════════════════
+]]
+
+-- ==================== ANALYZER MODULE ====================
+local MapAnalyzer = {}
+MapAnalyzer.Results = {Low = {}, Medium = {}, High = {}, TotalVulnerabilities = 0}
+
+local Config = {
+    ScanRadius = 500,
+    MinExploitableHeight = 10,
+    MaxScanTime = 30,
+    IgnoreNames = {"Baseplate", "Base", "Ground"}
+}
+
+-- LOW SEVERITY SCAN
+function MapAnalyzer:ScanLowVulnerabilities()
+    local lowIssues = {}
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            if not obj.Anchored then
+                local ignore = false
+                for _, name in pairs(Config.IgnoreNames) do
+                    if string.find(obj.Name:lower(), name:lower()) then
+                        ignore = true
+                        break
+                    end
+                end
+                if not ignore then
+                    table.insert(lowIssues, {
+                        Type = "Unanchored Part",
+                        Object = obj,
+                        Position = obj.Position,
+                        Description = "Part tidak di-anchor"
+                    })
+                end
+            end
+            if not obj.CanCollide then
+                table.insert(lowIssues, {
+                    Type = "No Collision",
+                    Object = obj,
+                    Position = obj.Position,
+                    Description = "Bisa ditembus"
+                })
+            end
+            if obj.Transparency >= 0.8 then
+                table.insert(lowIssues, {
+                    Type = "Transparent",
+                    Object = obj,
+                    Position = obj.Position,
+                    Description = "Barrier transparan"
+                })
+            end
+        end
+    end
+    return lowIssues
+end
+
+-- MEDIUM SEVERITY SCAN
+function MapAnalyzer:ScanMediumVulnerabilities()
+    local mediumIssues = {}
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            if obj.Position.Y < -100 or obj.Position.Y > 1000 then
+                table.insert(mediumIssues, {
+                    Type = "Out of Bounds",
+                    Object = obj,
+                    Position = obj.Position,
+                    Description = "Y: " .. math.floor(obj.Position.Y)
+                })
+            end
+        end
+        if obj:IsA("TrussPart") then
+            table.insert(mediumIssues, {
+                Type = "Climbable",
+                Object = obj,
+                Position = obj.Position,
+                Description = "Bisa dipanjat"
+            })
+        end
+        if obj:IsA("SpawnLocation") then
+            if obj.Position.Y > Config.MinExploitableHeight then
+                table.insert(mediumIssues, {
+                    Type = "Spawn Exploit",
+                    Object = obj,
+                    Position = obj.Position,
+                    Description = "Spawn tinggi"
+                })
+            end
+        end
+    end
+    return mediumIssues
+end
+
+-- HIGH SEVERITY SCAN
+function MapAnalyzer:ScanHighVulnerabilities()
+    local highIssues = {}
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("ClickDetector") then
+            local parent = obj.Parent
+            if parent and parent:IsA("BasePart") and parent.Transparency >= 0.5 then
+                table.insert(highIssues, {
+                    Type = "Hidden Click",
+                    Object = parent,
+                    Position = parent.Position,
+                    Description = "ClickDetector tersembunyi"
+                })
+            end
+        end
+        if obj:IsA("ProximityPrompt") then
+            table.insert(highIssues, {
+                Type = "Proximity",
+                Object = obj.Parent,
+                Position = obj.Parent:IsA("BasePart") and obj.Parent.Position or Vector3.new(0,0,0),
+                Description = "Bisa diexploit"
+            })
+        end
+        if obj:IsA("Tool") then
+            table.insert(highIssues, {
+                Type = "Free Tool",
+                Object = obj,
+                Position = obj:FindFirstChild("Handle") and obj.Handle.Position or Vector3.new(0,0,0),
+                Description = "Tool gratis"
+            })
+        end
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            table.insert(highIssues, {
+                Type = "Remote",
+                Object = obj,
+                Position = Vector3.new(0,0,0),
+                Description = obj.Name
+            })
+        end
+    end
+    return highIssues
+end
+
+function MapAnalyzer:StartScan()
+    self.Results = {Low = {}, Medium = {}, High = {}, TotalVulnerabilities = 0}
+    self.Results.Low = self:ScanLowVulnerabilities()
+    self.Results.Medium = self:ScanMediumVulnerabilities()
+    self.Results.High = self:ScanHighVulnerabilities()
+    self.Results.TotalVulnerabilities = #self.Results.Low + #self.Results.Medium + #self.Results.High
+    return self.Results
+end
+
+function MapAnalyzer:TeleportTo(vulnerability)
+    local player = game.Players.LocalPlayer
+    if player and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+        player.Character.HumanoidRootPart.CFrame = CFrame.new(vulnerability.Position + Vector3.new(0, 5, 0))
+    end
+end
+
+function MapAnalyzer:HighlightObject(obj, color)
+    if obj and obj:IsA("BasePart") then
+        local highlight = Instance.new("SelectionBox")
+        highlight.Adornee = obj
+        highlight.Color3 = color
+        highlight.LineThickness = 0.05
+        highlight.Parent = obj
+        spawn(function()
+            wait(5)
+            highlight:Destroy()
+        end)
+    end
+end
+
+-- ==================== GUI MODULE ====================
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+if playerGui:FindFirstChild("MapAnalyzerGUI") then
+    playerGui:FindFirstChild("MapAnalyzerGUI"):Destroy()
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MapAnalyzerGUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = playerGui
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 380, 0, 480)
+MainFrame.Position = UDim2.new(0.5, -190, 0.5, -240)
+MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 12)
+
+local Header = Instance.new("Frame")
+Header.Size = UDim2.new(1, 0, 0, 45)
+Header.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+Header.Parent = MainFrame
+Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 12)
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -90, 1, 0)
+Title.Position = UDim2.new(0, 10, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "🔍 MAP ANALYZER"
+Title.TextColor3 = Color3.new(1, 1, 1)
+Title.TextSize = 18
+Title.Font = Enum.Font.GothamBold
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = Header
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 35, 0, 35)
+CloseBtn.Position = UDim2.new(1, -40, 0, 5)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+CloseBtn.Text = "✕"
+CloseBtn.TextColor3 = Color3.new(1, 1, 1)
+CloseBtn.TextSize = 18
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.Parent = Header
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 8)
+CloseBtn.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
+
+local MinBtn = Instance.new("TextButton")
+MinBtn.Size = UDim2.new(0, 35, 0, 35)
+MinBtn.Position = UDim2.new(1, -80, 0, 5)
+MinBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+MinBtn.Text = "─"
+MinBtn.TextColor3 = Color3.new(1, 1, 1)
+MinBtn.TextSize = 18
+MinBtn.Font = Enum.Font.GothamBold
+MinBtn.Parent = Header
+Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 8)
+
+local minimized = false
+MinBtn.MouseButton1Click:Connect(function()
+    minimized = not minimized
+    MainFrame:TweenSize(
+        minimized and UDim2.new(0, 380, 0, 45) or UDim2.new(0, 380, 0, 480),
+        "Out", "Quad", 0.3, true
+    )
+    MinBtn.Text = minimized and "+" or "─"
+end)
+
+local StatsPanel = Instance.new("Frame")
+StatsPanel.Size = UDim2.new(1, -20, 0, 70)
+StatsPanel.Position = UDim2.new(0, 10, 0, 55)
+StatsPanel.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+StatsPanel.Parent = MainFrame
+Instance.new("UICorner", StatsPanel).CornerRadius = UDim.new(0, 8)
+
+local layout = Instance.new("UIListLayout")
+layout.FillDirection = Enum.FillDirection.Horizontal
+layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+layout.VerticalAlignment = Enum.VerticalAlignment.Center
+layout.Padding = UDim.new(0, 8)
+layout.Parent = StatsPanel
+
+local function createCard(title, color)
+    local card = Instance.new("Frame")
+    card.Size = UDim2.new(0, 110, 0, 60)
+    card.BackgroundColor3 = color
+    card.Parent = StatsPanel
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, 0, 0, 20)
+    lbl.Position = UDim2.new(0, 0, 0, 5)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = title
+    lbl.TextColor3 = Color3.new(1, 1, 1)
+    lbl.TextSize = 11
+    lbl.Font = Enum.Font.Gotham
+    lbl.Parent = card
+
+    local cnt = Instance.new("TextLabel")
+    cnt.Name = "Count"
+    cnt.Size = UDim2.new(1, 0, 0, 30)
+    cnt.Position = UDim2.new(0, 0, 0, 25)
+    cnt.BackgroundTransparency = 1
+    cnt.Text = "0"
+    cnt.TextColor3 = Color3.new(1, 1, 1)
+    cnt.TextSize = 22
+    cnt.Font = Enum.Font.GothamBold
+    cnt.Parent = card
+
+    return card
+end
+
+local LowCard = createCard("LOW", Color3.fromRGB(50, 150, 50))
+local MedCard = createCard("MEDIUM", Color3.fromRGB(200, 150, 50))
+local HighCard = createCard("HIGH", Color3.fromRGB(200, 50, 50))
+
+local ScanBtn = Instance.new("TextButton")
+ScanBtn.Size = UDim2.new(1, -20, 0, 40)
+ScanBtn.Position = UDim2.new(0, 10, 0, 135)
+ScanBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 200)
+ScanBtn.Text = "🔎 START SCAN"
+ScanBtn.TextColor3 = Color3.new(1, 1, 1)
+ScanBtn.TextSize = 16
+ScanBtn.Font = Enum.Font.GothamBold
+ScanBtn.Parent = MainFrame
+Instance.new("UICorner", ScanBtn).CornerRadius = UDim.new(0, 8)
+
+local Scroll = Instance.new("ScrollingFrame")
+Scroll.Size = UDim2.new(1, -20, 0, 295)
+Scroll.Position = UDim2.new(0, 10, 0, 185)
+Scroll.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+Scroll.ScrollBarThickness = 6
+Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+Scroll.Parent = MainFrame
+Instance.new("UICorner", Scroll).CornerRadius = UDim.new(0, 8)
+
+local scrollLayout = Instance.new("UIListLayout")
+scrollLayout.Padding = UDim.new(0, 5)
+scrollLayout.Parent = Scroll
+scrollLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    Scroll.CanvasSize = UDim2.new(0, 0, 0, scrollLayout.AbsoluteContentSize.Y + 10)
+end)
+
+local function createResultCard(vuln, severity)
+    local colors = {
+        Low = Color3.fromRGB(50, 150, 50),
+        Medium = Color3.fromRGB(200, 150, 50),
+        High = Color3.fromRGB(200, 50, 50)
+    }
+
+    local card = Instance.new("Frame")
+    card.Size = UDim2.new(1, -10, 0, 65)
+    card.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
+    card.Parent = Scroll
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
+
+    local ind = Instance.new("Frame")
+    ind.Size = UDim2.new(0, 4, 1, 0)
+    ind.BackgroundColor3 = colors[severity]
+    ind.Parent = card
+    Instance.new("UICorner", ind).CornerRadius = UDim.new(0, 6)
+
+    local type = Instance.new("TextLabel")
+    type.Size = UDim2.new(1, -55, 0, 22)
+    type.Position = UDim2.new(0, 8, 0, 5)
+    type.BackgroundTransparency = 1
+    type.Text = vuln.Type
+    type.TextColor3 = Color3.new(1, 1, 1)
+    type.TextSize = 13
+    type.Font = Enum.Font.GothamBold
+    type.TextXAlignment = Enum.TextXAlignment.Left
+    type.Parent = card
+
+    local desc = Instance.new("TextLabel")
+    desc.Size = UDim2.new(1, -55, 0, 32)
+    desc.Position = UDim2.new(0, 8, 0, 27)
+    desc.BackgroundTransparency = 1
+    desc.Text = vuln.Description
+    desc.TextColor3 = Color3.fromRGB(200, 200, 200)
+    desc.TextSize = 10
+    desc.Font = Enum.Font.Gotham
+    desc.TextXAlignment = Enum.TextXAlignment.Left
+    desc.TextWrapped = true
+    desc.Parent = card
+
+    local tpBtn = Instance.new("TextButton")
+    tpBtn.Size = UDim2.new(0, 40, 0, 55)
+    tpBtn.Position = UDim2.new(1, -45, 0, 5)
+    tpBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 200)
+    tpBtn.Text = "📍"
+    tpBtn.TextSize = 18
+    tpBtn.Parent = card
+    Instance.new("UICorner", tpBtn).CornerRadius = UDim.new(0, 6)
+
+    tpBtn.MouseButton1Click:Connect(function()
+        MapAnalyzer:TeleportTo(vuln)
+        if vuln.Object then
+            MapAnalyzer:HighlightObject(vuln.Object, colors[severity])
+        end
+    end)
+end
+
+local function displayResults(results)
+    for _, child in pairs(Scroll:GetChildren()) do
+        if child:IsA("Frame") then child:Destroy() end
+    end
+
+    for _, v in pairs(results.Low) do createResultCard(v, "Low") end
+    for _, v in pairs(results.Medium) do createResultCard(v, "Medium") end
+    for _, v in pairs(results.High) do createResultCard(v, "High") end
+
+    LowCard.Count.Text = tostring(#results.Low)
+    MedCard.Count.Text = tostring(#results.Medium)
+    HighCard.Count.Text = tostring(#results.High)
+end
+
+ScanBtn.MouseButton1Click:Connect(function()
+    ScanBtn.Text = "⏳ SCANNING..."
+    ScanBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+    wait(0.3)
+    local results = MapAnalyzer:StartScan()
+    displayResults(results)
+    ScanBtn.Text = "🔎 START SCAN"
+    ScanBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 200)
+end)
+
+print("[MAP ANALYZER] Loaded! GUI ready for Delta Android")
