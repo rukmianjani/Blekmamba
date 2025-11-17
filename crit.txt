@@ -2,27 +2,113 @@
     ═══════════════════════════════════════════════════
          ROBLOX MAP ANALYZER - ADVANCED VERSION
          Compatible: Delta Android
-         Version: 2.0 - UPGRADED
+         Version: 3.0 - ULTRA UPGRADED
     ═══════════════════════════════════════════════════
 
     NEW FEATURES:
-    ✓ Remove Duplicate Detection
-    ✓ Filter Tabs (Low/Medium/High)
-    ✓ Show Folder Path
-    ✓ Copy Script Content
-    ✓ Value Editor (Edit Properties)
+    ✓ Simplified GUI (Based on analyzer.lua)
+    ✓ Execute button on input values
+    ✓ Deep scan ALL assets recursively
+    ✓ Complete effect descriptions
+    ✓ Performance optimized (no lag)
+    ✓ HTTP Request tracking for vulnerabilities
 ]]
+
+-- ==================== SERVICES ====================
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
 
 -- ==================== ANALYZER MODULE ====================
 local MapAnalyzer = {}
-MapAnalyzer.Results = {Low = {}, Medium = {}, High = {}, TotalVulnerabilities = 0}
+MapAnalyzer.Results = {Low = {}, Medium = {}, High = {}, HTTP = {}, TotalVulnerabilities = 0}
 
 local Config = {
     ScanRadius = 500,
     MinExploitableHeight = 10,
     MaxScanTime = 30,
-    IgnoreNames = {"Baseplate", "Base", "Ground"}
+    IgnoreNames = {"Baseplate", "Base", "Ground"},
+    BatchSize = 50, -- Process in batches to prevent lag
+    YieldInterval = 100 -- Yield every N objects
 }
+
+-- HTTP Request Tracker
+local HTTPTracker = {
+    Requests = {},
+    VulnerableEndpoints = {}
+}
+
+-- Track HTTP requests
+local originalHttpGet = HttpService.GetAsync
+local originalHttpPost = HttpService.PostAsync
+
+-- Hook HTTP requests (if possible)
+pcall(function()
+    -- Try to hook HttpService methods
+    local mt = getrawmetatable(HttpService)
+    if mt then
+        local oldIndex = mt.__index
+        mt.__index = function(self, key)
+            if key == "GetAsync" then
+                return function(url, ...)
+                    table.insert(HTTPTracker.Requests, {
+                        Type = "GET",
+                        URL = url,
+                        Time = tick(),
+                        Vulnerable = HTTPTracker:CheckVulnerability(url)
+                    })
+                    return oldIndex(self, key)(url, ...)
+                end
+            elseif key == "PostAsync" then
+                return function(url, data, ...)
+                    table.insert(HTTPTracker.Requests, {
+                        Type = "POST",
+                        URL = url,
+                        Data = data,
+                        Time = tick(),
+                        Vulnerable = HTTPTracker:CheckVulnerability(url)
+                    })
+                    return oldIndex(self, key)(url, data, ...)
+                end
+            end
+            return oldIndex(self, key)
+        end
+    end
+end)
+
+function HTTPTracker:CheckVulnerability(url)
+    local urlLower = string.lower(url)
+    local vulnerablePatterns = {
+        "http://", -- Insecure HTTP
+        "localhost", -- Local endpoints
+        "127.0.0.1", -- Localhost IP
+        "192.168", -- Local network
+        "10.0", -- Private network
+        "api/", -- API endpoints
+        "admin", -- Admin endpoints
+        "config", -- Config files
+        ".json", -- JSON files
+        ".xml", -- XML files
+        "token", -- Token endpoints
+        "auth", -- Auth endpoints
+        "login", -- Login endpoints
+        "password", -- Password endpoints
+        "user", -- User data
+        "data", -- Data endpoints
+    }
+    
+    for _, pattern in ipairs(vulnerablePatterns) do
+        if urlLower:match(pattern) then
+            return true
+        end
+    end
+    return false
+end
 
 -- UTILITY: Remove Duplicates
 local function removeDuplicates(issues)
@@ -30,10 +116,7 @@ local function removeDuplicates(issues)
     local unique = {}
 
     for _, issue in pairs(issues) do
-        -- Create unique key based on Type + Position
-        local key = issue.Type .. "_" .. tostring(math.floor(issue.Position.X)) .. "_" ..
-                    tostring(math.floor(issue.Position.Y)) .. "_" .. tostring(math.floor(issue.Position.Z))
-
+        local key = issue.Type .. "_" .. tostring(issue.Path)
         if not seen[key] then
             seen[key] = true
             table.insert(unique, issue)
@@ -43,10 +126,65 @@ local function removeDuplicates(issues)
     return unique
 end
 
--- LOW SEVERITY SCAN
+-- UTILITY: Get Effect Description
+local function getEffectDescription(vulnType, obj)
+    local effects = {
+        ["Unanchored Part"] = "⚠️ EFEK: Part bisa dipindahkan/didorong, bisa menyebabkan exploit noclip atau bypass barrier",
+        ["No Collision"] = "⚠️ EFEK: Part bisa ditembus, player bisa walk through barrier",
+        ["Transparent"] = "⚠️ EFEK: Barrier transparan, bisa di-exploit untuk melihat area terlarang",
+        ["Out of Bounds"] = "⚠️ EFEK: Part di luar batas map, bisa digunakan untuk teleport exploit",
+        ["Climbable"] = "⚠️ EFEK: TrussPart bisa dipanjat, bisa bypass barrier tinggi",
+        ["Spawn Exploit"] = "⚠️ EFEK: Spawn di ketinggian, bisa digunakan untuk teleport exploit",
+        ["Hidden Click"] = "⚠️ EFEK: ClickDetector tersembunyi, bisa di-trigger tanpa terlihat",
+        ["Proximity"] = "⚠️ EFEK: ProximityPrompt bisa di-trigger dari jarak jauh dengan exploit",
+        ["Free Tool"] = "⚠️ EFEK: Tool bisa diambil gratis, bisa digunakan untuk exploit",
+        ["Remote"] = "⚠️ EFEK: RemoteEvent/Function bisa di-fire dari client, bisa menyebabkan RCE atau data manipulation",
+        ["HTTP Request"] = "⚠️ EFEK: HTTP request ke endpoint yang vulnerable, bisa menyebabkan data leak atau injection"
+    }
+    
+    return effects[vulnType] or "⚠️ EFEK: Potensi exploit atau vulnerability"
+end
+
+-- DEEP SCAN: Get ALL descendants recursively
+local function deepScanContainer(container, callback, processed)
+    processed = processed or {}
+    local count = 0
+    
+    local function scanRecursive(obj)
+        if processed[obj] then return end
+        processed[obj] = true
+        count = count + 1
+        
+        -- Process current object
+        callback(obj)
+        
+        -- Process all children recursively
+        for _, child in pairs(obj:GetChildren()) do
+            scanRecursive(child)
+        end
+        
+        -- Yield periodically to prevent lag
+        if count % Config.YieldInterval == 0 then
+            wait()
+        end
+    end
+    
+    -- Start from container
+    scanRecursive(container)
+    
+    return count
+end
+
+-- LOW SEVERITY SCAN (DEEP)
 function MapAnalyzer:ScanLowVulnerabilities()
     local lowIssues = {}
-    for _, obj in pairs(workspace:GetDescendants()) do
+    local processed = {}
+    local count = 0
+    
+    -- Scan workspace deeply
+    deepScanContainer(workspace, function(obj)
+        count = count + 1
+        
         if obj:IsA("BasePart") then
             if not obj.Anchored then
                 local ignore = false
@@ -62,6 +200,7 @@ function MapAnalyzer:ScanLowVulnerabilities()
                         Object = obj,
                         Position = obj.Position,
                         Description = "Part tidak di-anchor",
+                        Effect = getEffectDescription("Unanchored Part", obj),
                         Path = obj:GetFullName(),
                         EditableProps = {
                             {Name = "Anchored", Value = obj.Anchored, Type = "boolean"},
@@ -77,6 +216,7 @@ function MapAnalyzer:ScanLowVulnerabilities()
                     Object = obj,
                     Position = obj.Position,
                     Description = "Bisa ditembus",
+                    Effect = getEffectDescription("No Collision", obj),
                     Path = obj:GetFullName(),
                     EditableProps = {
                         {Name = "CanCollide", Value = obj.CanCollide, Type = "boolean"},
@@ -90,6 +230,7 @@ function MapAnalyzer:ScanLowVulnerabilities()
                     Object = obj,
                     Position = obj.Position,
                     Description = "Barrier transparan",
+                    Effect = getEffectDescription("Transparent", obj),
                     Path = obj:GetFullName(),
                     EditableProps = {
                         {Name = "Transparency", Value = obj.Transparency, Type = "number"},
@@ -98,131 +239,223 @@ function MapAnalyzer:ScanLowVulnerabilities()
                 })
             end
         end
-    end
+    end, processed)
+    
+    print("[SCAN] Low vulnerabilities: " .. #lowIssues .. " (scanned " .. count .. " objects)")
     return removeDuplicates(lowIssues)
 end
 
--- MEDIUM SEVERITY SCAN
+-- MEDIUM SEVERITY SCAN (DEEP)
 function MapAnalyzer:ScanMediumVulnerabilities()
     local mediumIssues = {}
-    for _, obj in pairs(workspace:GetDescendants()) do
-        if obj:IsA("BasePart") then
-            if obj.Position.Y < -100 or obj.Position.Y > 1000 then
+    local processed = {}
+    local count = 0
+    
+    -- Scan all services deeply
+    local containers = {workspace, ReplicatedStorage, game:GetService("ServerStorage"), game:GetService("StarterGui")}
+    
+    for _, container in pairs(containers) do
+        deepScanContainer(container, function(obj)
+            count = count + 1
+            
+            if obj:IsA("BasePart") then
+                if obj.Position.Y < -100 or obj.Position.Y > 1000 then
+                    table.insert(mediumIssues, {
+                        Type = "Out of Bounds",
+                        Object = obj,
+                        Position = obj.Position,
+                        Description = "Y: " .. math.floor(obj.Position.Y),
+                        Effect = getEffectDescription("Out of Bounds", obj),
+                        Path = obj:GetFullName(),
+                        EditableProps = {
+                            {Name = "Position", Value = obj.Position, Type = "vector3"},
+                            {Name = "Anchored", Value = obj.Anchored, Type = "boolean"}
+                        }
+                    })
+                end
+            end
+            if obj:IsA("TrussPart") then
                 table.insert(mediumIssues, {
-                    Type = "Out of Bounds",
+                    Type = "Climbable",
                     Object = obj,
                     Position = obj.Position,
-                    Description = "Y: " .. math.floor(obj.Position.Y),
+                    Description = "Bisa dipanjat",
+                    Effect = getEffectDescription("Climbable", obj),
                     Path = obj:GetFullName(),
                     EditableProps = {
-                        {Name = "Position", Value = obj.Position, Type = "vector3"},
-                        {Name = "Anchored", Value = obj.Anchored, Type = "boolean"}
+                        {Name = "CanCollide", Value = obj.CanCollide, Type = "boolean"},
+                        {Name = "Transparency", Value = obj.Transparency, Type = "number"}
                     }
                 })
             end
-        end
-        if obj:IsA("TrussPart") then
-            table.insert(mediumIssues, {
-                Type = "Climbable",
-                Object = obj,
-                Position = obj.Position,
-                Description = "Bisa dipanjat",
-                Path = obj:GetFullName(),
-                EditableProps = {
-                    {Name = "CanCollide", Value = obj.CanCollide, Type = "boolean"},
-                    {Name = "Transparency", Value = obj.Transparency, Type = "number"}
-                }
-            })
-        end
-        if obj:IsA("SpawnLocation") then
-            if obj.Position.Y > Config.MinExploitableHeight then
-                table.insert(mediumIssues, {
-                    Type = "Spawn Exploit",
-                    Object = obj,
-                    Position = obj.Position,
-                    Description = "Spawn tinggi",
-                    Path = obj:GetFullName(),
-                    EditableProps = {
-                        {Name = "Position", Value = obj.Position, Type = "vector3"},
-                        {Name = "Enabled", Value = obj.Enabled, Type = "boolean"},
-                        {Name = "Duration", Value = obj.Duration, Type = "number"}
-                    }
-                })
+            if obj:IsA("SpawnLocation") then
+                if obj.Position.Y > Config.MinExploitableHeight then
+                    table.insert(mediumIssues, {
+                        Type = "Spawn Exploit",
+                        Object = obj,
+                        Position = obj.Position,
+                        Description = "Spawn tinggi",
+                        Effect = getEffectDescription("Spawn Exploit", obj),
+                        Path = obj:GetFullName(),
+                        EditableProps = {
+                            {Name = "Position", Value = obj.Position, Type = "vector3"},
+                            {Name = "Enabled", Value = obj.Enabled, Type = "boolean"},
+                            {Name = "Duration", Value = obj.Duration, Type = "number"}
+                        }
+                    })
+                end
             end
-        end
+        end, processed)
     end
+    
+    print("[SCAN] Medium vulnerabilities: " .. #mediumIssues .. " (scanned " .. count .. " objects)")
     return removeDuplicates(mediumIssues)
 end
 
--- HIGH SEVERITY SCAN
+-- HIGH SEVERITY SCAN (DEEP) + HTTP TRACKING
 function MapAnalyzer:ScanHighVulnerabilities()
     local highIssues = {}
-    for _, obj in pairs(workspace:GetDescendants()) do
-        if obj:IsA("ClickDetector") then
-            local parent = obj.Parent
-            if parent and parent:IsA("BasePart") and parent.Transparency >= 0.5 then
-                table.insert(highIssues, {
-                    Type = "Hidden Click",
-                    Object = parent,
-                    Position = parent.Position,
-                    Description = "ClickDetector tersembunyi",
-                    Path = parent:GetFullName(),
-                    EditableProps = {
-                        {Name = "MaxActivationDistance", Value = obj.MaxActivationDistance, Type = "number"},
-                        {Name = "Transparency", Value = parent.Transparency, Type = "number"}
-                    }
-                })
-            end
-        end
-        if obj:IsA("ProximityPrompt") then
-            local parent = obj.Parent
-            table.insert(highIssues, {
-                Type = "Proximity",
-                Object = parent,
-                Position = parent:IsA("BasePart") and parent.Position or Vector3.new(0,0,0),
-                Description = "Bisa diexploit",
-                Path = obj:GetFullName(),
-                EditableProps = {
-                    {Name = "MaxActivationDistance", Value = obj.MaxActivationDistance, Type = "number"},
-                    {Name = "HoldDuration", Value = obj.HoldDuration, Type = "number"},
-                    {Name = "Enabled", Value = obj.Enabled, Type = "boolean"}
-                }
-            })
-        end
-        if obj:IsA("Tool") then
-            local handle = obj:FindFirstChild("Handle")
-            table.insert(highIssues, {
-                Type = "Free Tool",
-                Object = obj,
-                Position = handle and handle.Position or Vector3.new(0,0,0),
-                Description = "Tool gratis: " .. obj.Name,
-                Path = obj:GetFullName(),
-                EditableProps = {
-                    {Name = "CanBeDropped", Value = obj.CanBeDropped, Type = "boolean"},
-                    {Name = "RequiresHandle", Value = obj.RequiresHandle, Type = "boolean"}
-                }
-            })
-        end
-        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-            table.insert(highIssues, {
-                Type = "Remote",
-                Object = obj,
-                Position = Vector3.new(0,0,0),
-                Description = obj.ClassName .. ": " .. obj.Name,
-                Path = obj:GetFullName(),
-                EditableProps = {} -- Remotes biasanya tidak bisa diedit propertinya
-            })
-        end
+    local processed = {}
+    local count = 0
+    
+    -- Scan ALL services deeply
+    local containers = {
+        workspace, 
+        ReplicatedStorage, 
+        game:GetService("ServerStorage"),
+        game:GetService("StarterGui"),
+        game:GetService("StarterPack"),
+        game:GetService("StarterPlayer"),
+        playerGui,
+        player
+    }
+    
+    for _, container in pairs(containers) do
+        pcall(function()
+            deepScanContainer(container, function(obj)
+                count = count + 1
+                
+                if obj:IsA("ClickDetector") then
+                    local parent = obj.Parent
+                    if parent and parent:IsA("BasePart") and parent.Transparency >= 0.5 then
+                        table.insert(highIssues, {
+                            Type = "Hidden Click",
+                            Object = parent,
+                            Position = parent.Position,
+                            Description = "ClickDetector tersembunyi",
+                            Effect = getEffectDescription("Hidden Click", obj),
+                            Path = parent:GetFullName(),
+                            EditableProps = {
+                                {Name = "MaxActivationDistance", Value = obj.MaxActivationDistance, Type = "number"},
+                                {Name = "Transparency", Value = parent.Transparency, Type = "number"}
+                            }
+                        })
+                    end
+                end
+                if obj:IsA("ProximityPrompt") then
+                    local parent = obj.Parent
+                    table.insert(highIssues, {
+                        Type = "Proximity",
+                        Object = parent,
+                        Position = parent:IsA("BasePart") and parent.Position or Vector3.new(0,0,0),
+                        Description = "Bisa diexploit",
+                        Effect = getEffectDescription("Proximity", obj),
+                        Path = obj:GetFullName(),
+                        EditableProps = {
+                            {Name = "MaxActivationDistance", Value = obj.MaxActivationDistance, Type = "number"},
+                            {Name = "HoldDuration", Value = obj.HoldDuration, Type = "number"},
+                            {Name = "Enabled", Value = obj.Enabled, Type = "boolean"}
+                        }
+                    })
+                end
+                if obj:IsA("Tool") then
+                    local handle = obj:FindFirstChild("Handle")
+                    table.insert(highIssues, {
+                        Type = "Free Tool",
+                        Object = obj,
+                        Position = handle and handle.Position or Vector3.new(0,0,0),
+                        Description = "Tool gratis: " .. obj.Name,
+                        Effect = getEffectDescription("Free Tool", obj),
+                        Path = obj:GetFullName(),
+                        EditableProps = {
+                            {Name = "CanBeDropped", Value = obj.CanBeDropped, Type = "boolean"},
+                            {Name = "RequiresHandle", Value = obj.RequiresHandle, Type = "boolean"}
+                        }
+                    })
+                end
+                if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+                    table.insert(highIssues, {
+                        Type = "Remote",
+                        Object = obj,
+                        Position = Vector3.new(0,0,0),
+                        Description = obj.ClassName .. ": " .. obj.Name,
+                        Effect = getEffectDescription("Remote", obj),
+                        Path = obj:GetFullName(),
+                        EditableProps = {}
+                    })
+                end
+                
+                -- Check for HTTP requests in scripts
+                if obj:IsA("BaseScript") or obj:IsA("ModuleScript") then
+                    pcall(function()
+                        local source = obj.Source
+                        if source then
+                            -- Look for HTTP requests
+                            for url in source:gmatch("['\"](https?://[^'\"]+)['\"]") do
+                                if HTTPTracker:CheckVulnerability(url) then
+                                    table.insert(highIssues, {
+                                        Type = "HTTP Request",
+                                        Object = obj,
+                                        Position = Vector3.new(0,0,0),
+                                        Description = "HTTP Request: " .. url,
+                                        Effect = getEffectDescription("HTTP Request", obj),
+                                        Path = obj:GetFullName(),
+                                        URL = url,
+                                        EditableProps = {}
+                                    })
+                                end
+                            end
+                        end
+                    end)
+                end
+            end, processed)
+        end)
     end
+    
+    print("[SCAN] High vulnerabilities: " .. #highIssues .. " (scanned " .. count .. " objects)")
     return removeDuplicates(highIssues)
 end
 
 function MapAnalyzer:StartScan()
-    self.Results = {Low = {}, Medium = {}, High = {}, TotalVulnerabilities = 0}
-    self.Results.Low = self:ScanLowVulnerabilities()
-    self.Results.Medium = self:ScanMediumVulnerabilities()
-    self.Results.High = self:ScanHighVulnerabilities()
-    self.Results.TotalVulnerabilities = #self.Results.Low + #self.Results.Medium + #self.Results.High
+    print("[SCAN] Starting deep scan...")
+    self.Results = {Low = {}, Medium = {}, High = {}, HTTP = {}, TotalVulnerabilities = 0}
+    
+    -- Scan in background to prevent lag
+    spawn(function()
+        self.Results.Low = self:ScanLowVulnerabilities()
+        if GUI_UpdateProgress then GUI_UpdateProgress(33) end
+        wait()
+        
+        self.Results.Medium = self:ScanMediumVulnerabilities()
+        if GUI_UpdateProgress then GUI_UpdateProgress(66) end
+        wait()
+        
+        self.Results.High = self:ScanHighVulnerabilities()
+        if GUI_UpdateProgress then GUI_UpdateProgress(100) end
+        
+        -- Extract HTTP vulnerabilities
+        for _, vuln in pairs(self.Results.High) do
+            if vuln.Type == "HTTP Request" then
+                table.insert(self.Results.HTTP, vuln)
+            end
+        end
+        
+        self.Results.TotalVulnerabilities = #self.Results.Low + #self.Results.Medium + #self.Results.High
+        
+        print("[SCAN] Complete! Total: " .. self.Results.TotalVulnerabilities)
+        if GUI_UpdateResults then GUI_UpdateResults() end
+    end)
+    
     return self.Results
 end
 
@@ -247,11 +480,7 @@ function MapAnalyzer:HighlightObject(obj, color)
     end
 end
 
--- ==================== GUI MODULE ====================
-local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
+-- ==================== GUI MODULE (SIMPLIFIED) ====================
 
 if playerGui:FindFirstChild("MapAnalyzerGUI") then
     playerGui:FindFirstChild("MapAnalyzerGUI"):Destroy()
@@ -263,8 +492,8 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = playerGui
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 420, 0, 550)
-MainFrame.Position = UDim2.new(0.5, -210, 0.5, -275)
+MainFrame.Size = UDim2.new(0, 420, 0, 600)
+MainFrame.Position = UDim2.new(0.5, -210, 0.5, -300)
 MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
 MainFrame.Active = true
 MainFrame.Draggable = true
@@ -282,38 +511,13 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -140, 1, 0)
 Title.Position = UDim2.new(0, 10, 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "🔍 MAP ANALYZER V2"
+Title.Text = "🔍 MAP ANALYZER V3"
 Title.TextColor3 = Color3.new(1, 1, 1)
 Title.TextSize = 18
 Title.Font = Enum.Font.GothamBold
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = Header
 
--- Info Button (Show Path & Copy)
-local InfoBtn = Instance.new("TextButton")
-InfoBtn.Size = UDim2.new(0, 35, 0, 35)
-InfoBtn.Position = UDim2.new(1, -125, 0, 5)
-InfoBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 200)
-InfoBtn.Text = "ℹ️"
-InfoBtn.TextColor3 = Color3.new(1, 1, 1)
-InfoBtn.TextSize = 18
-InfoBtn.Font = Enum.Font.GothamBold
-InfoBtn.Parent = Header
-Instance.new("UICorner", InfoBtn).CornerRadius = UDim.new(0, 8)
-
--- Minimize Button
-local MinBtn = Instance.new("TextButton")
-MinBtn.Size = UDim2.new(0, 35, 0, 35)
-MinBtn.Position = UDim2.new(1, -85, 0, 5)
-MinBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
-MinBtn.Text = "─"
-MinBtn.TextColor3 = Color3.new(1, 1, 1)
-MinBtn.TextSize = 18
-MinBtn.Font = Enum.Font.GothamBold
-MinBtn.Parent = Header
-Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 8)
-
--- Close Button
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Size = UDim2.new(0, 35, 0, 35)
 CloseBtn.Position = UDim2.new(1, -40, 0, 5)
@@ -342,7 +546,7 @@ layout.Parent = StatsPanel
 
 local function createCard(title, color)
     local card = Instance.new("Frame")
-    card.Size = UDim2.new(0, 125, 0, 60)
+    card.Size = UDim2.new(0, 95, 0, 60)
     card.BackgroundColor3 = color
     card.Parent = StatsPanel
     Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8)
@@ -372,25 +576,40 @@ local function createCard(title, color)
 end
 
 local LowCard = createCard("LOW", Color3.fromRGB(50, 150, 50))
-local MedCard = createCard("MEDIUM", Color3.fromRGB(200, 150, 50))
+local MedCard = createCard("MED", Color3.fromRGB(200, 150, 50))
 local HighCard = createCard("HIGH", Color3.fromRGB(200, 50, 50))
+local HTTPCard = createCard("HTTP", Color3.fromRGB(255, 100, 100))
 
 -- Scan Button
 local ScanBtn = Instance.new("TextButton")
 ScanBtn.Size = UDim2.new(1, -20, 0, 40)
 ScanBtn.Position = UDim2.new(0, 10, 0, 135)
 ScanBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 200)
-ScanBtn.Text = "🔎 START SCAN"
+ScanBtn.Text = "🔎 START DEEP SCAN"
 ScanBtn.TextColor3 = Color3.new(1, 1, 1)
 ScanBtn.TextSize = 16
 ScanBtn.Font = Enum.Font.GothamBold
 ScanBtn.Parent = MainFrame
 Instance.new("UICorner", ScanBtn).CornerRadius = UDim.new(0, 8)
 
--- FILTER TABS (NEW FEATURE!)
+-- Progress Bar
+local ProgressBar = Instance.new("Frame")
+ProgressBar.Size = UDim2.new(1, -20, 0, 8)
+ProgressBar.Position = UDim2.new(0, 10, 0, 185)
+ProgressBar.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+ProgressBar.Parent = MainFrame
+Instance.new("UICorner", ProgressBar).CornerRadius = UDim.new(0, 4)
+
+local ProgressFill = Instance.new("Frame")
+ProgressFill.Size = UDim2.new(0, 0, 1, 0)
+ProgressFill.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+ProgressFill.Parent = ProgressBar
+Instance.new("UICorner", ProgressFill).CornerRadius = UDim.new(0, 4)
+
+-- FILTER TABS
 local TabsFrame = Instance.new("Frame")
 TabsFrame.Size = UDim2.new(1, -20, 0, 40)
-TabsFrame.Position = UDim2.new(0, 10, 0, 185)
+TabsFrame.Position = UDim2.new(0, 10, 0, 200)
 TabsFrame.BackgroundTransparency = 1
 TabsFrame.Parent = MainFrame
 
@@ -405,11 +624,11 @@ local currentResults = nil
 
 local function createTab(text, filter)
     local tab = Instance.new("TextButton")
-    tab.Size = UDim2.new(0, 95, 0, 35)
+    tab.Size = UDim2.new(0, 75, 0, 35)
     tab.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
     tab.Text = text
     tab.TextColor3 = Color3.new(1, 1, 1)
-    tab.TextSize = 14
+    tab.TextSize = 12
     tab.Font = Enum.Font.GothamBold
     tab.Parent = TabsFrame
     Instance.new("UICorner", tab).CornerRadius = UDim.new(0, 8)
@@ -418,14 +637,15 @@ local function createTab(text, filter)
 end
 
 local AllTab = createTab("ALL", "All")
-local LowTab = createTab("🟢 LOW", "Low")
-local MedTab = createTab("🟡 MED", "Medium")
-local HighTab = createTab("🔴 HIGH", "High")
+local LowTab = createTab("LOW", "Low")
+local MedTab = createTab("MED", "Medium")
+local HighTab = createTab("HIGH", "High")
+local HTTPTab = createTab("HTTP", "HTTP")
 
 -- Results Scroll
 local Scroll = Instance.new("ScrollingFrame")
-Scroll.Size = UDim2.new(1, -20, 0, 305)
-Scroll.Position = UDim2.new(0, 10, 0, 235)
+Scroll.Size = UDim2.new(1, -20, 0, 340)
+Scroll.Position = UDim2.new(0, 10, 0, 250)
 Scroll.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
 Scroll.ScrollBarThickness = 6
 Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
@@ -441,8 +661,8 @@ end)
 
 -- ==================== VALUE EDITOR POPUP ====================
 local EditorFrame = Instance.new("Frame")
-EditorFrame.Size = UDim2.new(0, 350, 0, 400)
-EditorFrame.Position = UDim2.new(0.5, -175, 0.5, -200)
+EditorFrame.Size = UDim2.new(0, 380, 0, 450)
+EditorFrame.Position = UDim2.new(0.5, -190, 0.5, -225)
 EditorFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
 EditorFrame.Visible = false
 EditorFrame.Parent = ScreenGui
@@ -477,7 +697,7 @@ EditorCloseBtn.Parent = EditorHeader
 Instance.new("UICorner", EditorCloseBtn).CornerRadius = UDim.new(0, 6)
 
 local EditorScroll = Instance.new("ScrollingFrame")
-EditorScroll.Size = UDim2.new(1, -20, 0, 350)
+EditorScroll.Size = UDim2.new(1, -20, 0, 400)
 EditorScroll.Position = UDim2.new(0, 10, 0, 45)
 EditorScroll.BackgroundTransparency = 1
 EditorScroll.ScrollBarThickness = 6
@@ -491,85 +711,10 @@ editorLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     EditorScroll.CanvasSize = UDim2.new(0, 0, 0, editorLayout.AbsoluteContentSize.Y + 10)
 end)
 
--- ==================== INFO POPUP (Path & Copy) ====================
-local InfoFrame = Instance.new("Frame")
-InfoFrame.Size = UDim2.new(0, 380, 0, 250)
-InfoFrame.Position = UDim2.new(0.5, -190, 0.5, -125)
-InfoFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-InfoFrame.Visible = false
-InfoFrame.Parent = ScreenGui
-Instance.new("UICorner", InfoFrame).CornerRadius = UDim.new(0, 12)
-
-local InfoHeader = Instance.new("Frame")
-InfoHeader.Size = UDim2.new(1, 0, 0, 40)
-InfoHeader.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-InfoHeader.Parent = InfoFrame
-Instance.new("UICorner", InfoHeader).CornerRadius = UDim.new(0, 12)
-
-local InfoTitle = Instance.new("TextLabel")
-InfoTitle.Size = UDim2.new(1, -40, 1, 0)
-InfoTitle.Position = UDim2.new(0, 10, 0, 0)
-InfoTitle.BackgroundTransparency = 1
-InfoTitle.Text = "ℹ️ SCRIPT INFO"
-InfoTitle.TextColor3 = Color3.new(1, 1, 1)
-InfoTitle.TextSize = 16
-InfoTitle.Font = Enum.Font.GothamBold
-InfoTitle.TextXAlignment = Enum.TextXAlignment.Left
-InfoTitle.Parent = InfoHeader
-
-local InfoCloseBtn = Instance.new("TextButton")
-InfoCloseBtn.Size = UDim2.new(0, 30, 0, 30)
-InfoCloseBtn.Position = UDim2.new(1, -35, 0, 5)
-InfoCloseBtn.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-InfoCloseBtn.Text = "✕"
-InfoCloseBtn.TextColor3 = Color3.new(1, 1, 1)
-InfoCloseBtn.TextSize = 16
-InfoCloseBtn.Font = Enum.Font.GothamBold
-InfoCloseBtn.Parent = InfoHeader
-Instance.new("UICorner", InfoCloseBtn).CornerRadius = UDim.new(0, 6)
-
-local PathLabel = Instance.new("TextLabel")
-PathLabel.Size = UDim2.new(1, -20, 0, 80)
-PathLabel.Position = UDim2.new(0, 10, 0, 50)
-PathLabel.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
-PathLabel.Text = "Script Path:\nE:\\CROT\\rosblok\\AdvancedMapAnalyzer.lua"
-PathLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-PathLabel.TextSize = 12
-PathLabel.Font = Enum.Font.Code
-PathLabel.TextWrapped = true
-PathLabel.TextXAlignment = Enum.TextXAlignment.Left
-PathLabel.TextYAlignment = Enum.TextYAlignment.Top
-PathLabel.Parent = InfoFrame
-Instance.new("UICorner", PathLabel).CornerRadius = UDim.new(0, 8)
-Instance.new("UIPadding", PathLabel).PaddingLeft = UDim.new(0, 10)
-Instance.new("UIPadding", PathLabel).PaddingTop = UDim.new(0, 10)
-
-local CopyPathBtn = Instance.new("TextButton")
-CopyPathBtn.Size = UDim2.new(1, -20, 0, 40)
-CopyPathBtn.Position = UDim2.new(0, 10, 0, 140)
-CopyPathBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 200)
-CopyPathBtn.Text = "📋 COPY SCRIPT PATH"
-CopyPathBtn.TextColor3 = Color3.new(1, 1, 1)
-CopyPathBtn.TextSize = 14
-CopyPathBtn.Font = Enum.Font.GothamBold
-CopyPathBtn.Parent = InfoFrame
-Instance.new("UICorner", CopyPathBtn).CornerRadius = UDim.new(0, 8)
-
-local CopyScriptBtn = Instance.new("TextButton")
-CopyScriptBtn.Size = UDim2.new(1, -20, 0, 40)
-CopyScriptBtn.Position = UDim2.new(0, 10, 0, 190)
-CopyScriptBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 100)
-CopyScriptBtn.Text = "📄 COPY SCRIPT CONTENT"
-CopyScriptBtn.TextColor3 = Color3.new(1, 1, 1)
-CopyScriptBtn.TextSize = 14
-CopyScriptBtn.Font = Enum.Font.GothamBold
-CopyScriptBtn.Parent = InfoFrame
-Instance.new("UICorner", CopyScriptBtn).CornerRadius = UDim.new(0, 8)
-
 -- ==================== FUNCTIONS ====================
 
 local function updateTabStyles()
-    for _, tab in pairs({AllTab, LowTab, MedTab, HighTab}) do
+    for _, tab in pairs({AllTab, LowTab, MedTab, HighTab, HTTPTab}) do
         if tab.Name == activeFilter then
             tab.BackgroundColor3 = Color3.fromRGB(50, 100, 200)
         else
@@ -605,10 +750,29 @@ local function showEditor(vulnerability)
     pad.PaddingLeft = UDim.new(0, 8)
     pad.PaddingTop = UDim.new(0, 8)
 
+    -- Show effect description
+    if vulnerability.Effect then
+        local effectLabel = Instance.new("TextLabel")
+        effectLabel.Size = UDim2.new(1, -10, 0, 50)
+        effectLabel.BackgroundColor3 = Color3.fromRGB(50, 40, 30)
+        effectLabel.Text = vulnerability.Effect
+        effectLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
+        effectLabel.TextSize = 10
+        effectLabel.Font = Enum.Font.Gotham
+        effectLabel.TextWrapped = true
+        effectLabel.TextXAlignment = Enum.TextXAlignment.Left
+        effectLabel.TextYAlignment = Enum.TextYAlignment.Top
+        effectLabel.Parent = EditorScroll
+        Instance.new("UICorner", effectLabel).CornerRadius = UDim.new(0, 6)
+        local pad2 = Instance.new("UIPadding", effectLabel)
+        pad2.PaddingLeft = UDim.new(0, 8)
+        pad2.PaddingTop = UDim.new(0, 8)
+    end
+
     -- Create property editors
     for _, prop in pairs(vulnerability.EditableProps) do
         local propFrame = Instance.new("Frame")
-        propFrame.Size = UDim2.new(1, -10, 0, 70)
+        propFrame.Size = UDim2.new(1, -10, 0, 80)
         propFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
         propFrame.Parent = EditorScroll
         Instance.new("UICorner", propFrame).CornerRadius = UDim.new(0, 6)
@@ -649,7 +813,7 @@ local function showEditor(vulnerability)
 
         elseif prop.Type == "number" then
             local inputBox = Instance.new("TextBox")
-            inputBox.Size = UDim2.new(0.7, -5, 0, 35)
+            inputBox.Size = UDim2.new(0.65, -5, 0, 35)
             inputBox.Position = UDim2.new(0, 5, 0, 30)
             inputBox.BackgroundColor3 = Color3.fromRGB(55, 55, 70)
             inputBox.Text = tostring(prop.Value)
@@ -660,32 +824,35 @@ local function showEditor(vulnerability)
             inputBox.Parent = propFrame
             Instance.new("UICorner", inputBox).CornerRadius = UDim.new(0, 6)
 
-            local applyBtn = Instance.new("TextButton")
-            applyBtn.Size = UDim2.new(0.3, -10, 0, 35)
-            applyBtn.Position = UDim2.new(0.7, 5, 0, 30)
-            applyBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 200)
-            applyBtn.Text = "✓"
-            applyBtn.TextColor3 = Color3.new(1, 1, 1)
-            applyBtn.TextSize = 18
-            applyBtn.Font = Enum.Font.GothamBold
-            applyBtn.Parent = propFrame
-            Instance.new("UICorner", applyBtn).CornerRadius = UDim.new(0, 6)
+            -- EXECUTE BUTTON (NEW!)
+            local executeBtn = Instance.new("TextButton")
+            executeBtn.Size = UDim2.new(0.35, -10, 0, 35)
+            executeBtn.Position = UDim2.new(0.65, 5, 0, 30)
+            executeBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+            executeBtn.Text = "✅ EXECUTE"
+            executeBtn.TextColor3 = Color3.new(1, 1, 1)
+            executeBtn.TextSize = 12
+            executeBtn.Font = Enum.Font.GothamBold
+            executeBtn.Parent = propFrame
+            Instance.new("UICorner", executeBtn).CornerRadius = UDim.new(0, 6)
 
-            applyBtn.MouseButton1Click:Connect(function()
+            executeBtn.MouseButton1Click:Connect(function()
                 local num = tonumber(inputBox.Text)
                 if num and vulnerability.Object then
                     pcall(function()
                         vulnerability.Object[prop.Name] = num
-                        applyBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+                        executeBtn.BackgroundColor3 = Color3.fromRGB(50, 255, 50)
+                        executeBtn.Text = "✅ DONE"
                         wait(0.5)
-                        applyBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 200)
+                        executeBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+                        executeBtn.Text = "✅ EXECUTE"
                     end)
                 end
             end)
 
         elseif prop.Type == "string" then
             local inputBox = Instance.new("TextBox")
-            inputBox.Size = UDim2.new(0.7, -5, 0, 35)
+            inputBox.Size = UDim2.new(0.65, -5, 0, 35)
             inputBox.Position = UDim2.new(0, 5, 0, 30)
             inputBox.BackgroundColor3 = Color3.fromRGB(55, 55, 70)
             inputBox.Text = tostring(prop.Value)
@@ -696,24 +863,27 @@ local function showEditor(vulnerability)
             inputBox.Parent = propFrame
             Instance.new("UICorner", inputBox).CornerRadius = UDim.new(0, 6)
 
-            local applyBtn = Instance.new("TextButton")
-            applyBtn.Size = UDim2.new(0.3, -10, 0, 35)
-            applyBtn.Position = UDim2.new(0.7, 5, 0, 30)
-            applyBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 200)
-            applyBtn.Text = "✓"
-            applyBtn.TextColor3 = Color3.new(1, 1, 1)
-            applyBtn.TextSize = 18
-            applyBtn.Font = Enum.Font.GothamBold
-            applyBtn.Parent = propFrame
-            Instance.new("UICorner", applyBtn).CornerRadius = UDim.new(0, 6)
+            -- EXECUTE BUTTON (NEW!)
+            local executeBtn = Instance.new("TextButton")
+            executeBtn.Size = UDim2.new(0.35, -10, 0, 35)
+            executeBtn.Position = UDim2.new(0.65, 5, 0, 30)
+            executeBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+            executeBtn.Text = "✅ EXECUTE"
+            executeBtn.TextColor3 = Color3.new(1, 1, 1)
+            executeBtn.TextSize = 12
+            executeBtn.Font = Enum.Font.GothamBold
+            executeBtn.Parent = propFrame
+            Instance.new("UICorner", executeBtn).CornerRadius = UDim.new(0, 6)
 
-            applyBtn.MouseButton1Click:Connect(function()
+            executeBtn.MouseButton1Click:Connect(function()
                 if vulnerability.Object and inputBox.Text ~= "" then
                     pcall(function()
                         vulnerability.Object[prop.Name] = inputBox.Text
-                        applyBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+                        executeBtn.BackgroundColor3 = Color3.fromRGB(50, 255, 50)
+                        executeBtn.Text = "✅ DONE"
                         wait(0.5)
-                        applyBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 200)
+                        executeBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+                        executeBtn.Text = "✅ EXECUTE"
                     end)
                 end
             end)
@@ -756,25 +926,28 @@ local function showEditor(vulnerability)
             inputZ.Parent = propFrame
             Instance.new("UICorner", inputZ).CornerRadius = UDim.new(0, 6)
 
-            local applyBtn = Instance.new("TextButton")
-            applyBtn.Size = UDim2.new(0.28, -10, 0, 35)
-            applyBtn.Position = UDim2.new(0.72, 5, 0, 30)
-            applyBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 200)
-            applyBtn.Text = "✓"
-            applyBtn.TextColor3 = Color3.new(1, 1, 1)
-            applyBtn.TextSize = 18
-            applyBtn.Font = Enum.Font.GothamBold
-            applyBtn.Parent = propFrame
-            Instance.new("UICorner", applyBtn).CornerRadius = UDim.new(0, 6)
+            -- EXECUTE BUTTON (NEW!)
+            local executeBtn = Instance.new("TextButton")
+            executeBtn.Size = UDim2.new(0.28, -10, 0, 35)
+            executeBtn.Position = UDim2.new(0.72, 5, 0, 30)
+            executeBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+            executeBtn.Text = "✅ EXEC"
+            executeBtn.TextColor3 = Color3.new(1, 1, 1)
+            executeBtn.TextSize = 12
+            executeBtn.Font = Enum.Font.GothamBold
+            executeBtn.Parent = propFrame
+            Instance.new("UICorner", executeBtn).CornerRadius = UDim.new(0, 6)
 
-            applyBtn.MouseButton1Click:Connect(function()
+            executeBtn.MouseButton1Click:Connect(function()
                 local x, y, z = tonumber(inputX.Text), tonumber(inputY.Text), tonumber(inputZ.Text)
                 if x and y and z and vulnerability.Object then
                     pcall(function()
                         vulnerability.Object[prop.Name] = Vector3.new(x, y, z)
-                        applyBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+                        executeBtn.BackgroundColor3 = Color3.fromRGB(50, 255, 50)
+                        executeBtn.Text = "✅"
                         wait(0.5)
-                        applyBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 200)
+                        executeBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+                        executeBtn.Text = "✅ EXEC"
                     end)
                 end
             end)
@@ -786,18 +959,19 @@ local function createResultCard(vuln, severity)
     local colors = {
         Low = Color3.fromRGB(50, 150, 50),
         Medium = Color3.fromRGB(200, 150, 50),
-        High = Color3.fromRGB(200, 50, 50)
+        High = Color3.fromRGB(200, 50, 50),
+        HTTP = Color3.fromRGB(255, 100, 100)
     }
 
     local card = Instance.new("Frame")
-    card.Size = UDim2.new(1, -10, 0, 85)
+    card.Size = UDim2.new(1, -10, 0, 110)
     card.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
     card.Parent = Scroll
     Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
 
     local ind = Instance.new("Frame")
     ind.Size = UDim2.new(0, 4, 1, 0)
-    ind.BackgroundColor3 = colors[severity]
+    ind.BackgroundColor3 = colors[severity] or Color3.fromRGB(100, 100, 100)
     ind.Parent = card
     Instance.new("UICorner", ind).CornerRadius = UDim.new(0, 6)
 
@@ -824,9 +998,24 @@ local function createResultCard(vuln, severity)
     desc.TextWrapped = true
     desc.Parent = card
 
+    -- Effect description
+    if vuln.Effect then
+        local effect = Instance.new("TextLabel")
+        effect.Size = UDim2.new(1, -55, 0, 30)
+        effect.Position = UDim2.new(0, 8, 0, 54)
+        effect.BackgroundTransparency = 1
+        effect.Text = vuln.Effect
+        effect.TextColor3 = Color3.fromRGB(255, 200, 100)
+        effect.TextSize = 9
+        effect.Font = Enum.Font.Gotham
+        effect.TextXAlignment = Enum.TextXAlignment.Left
+        effect.TextWrapped = true
+        effect.Parent = card
+    end
+
     local path = Instance.new("TextLabel")
-    path.Size = UDim2.new(1, -55, 0, 25)
-    path.Position = UDim2.new(0, 8, 0, 54)
+    path.Size = UDim2.new(1, -55, 0, 20)
+    path.Position = UDim2.new(0, 8, 0, 86)
     path.BackgroundTransparency = 1
     path.Text = "📁 " .. vuln.Path
     path.TextColor3 = Color3.fromRGB(150, 150, 150)
@@ -849,11 +1038,11 @@ local function createResultCard(vuln, severity)
     tpBtn.MouseButton1Click:Connect(function()
         MapAnalyzer:TeleportTo(vuln)
         if vuln.Object then
-            MapAnalyzer:HighlightObject(vuln.Object, colors[severity])
+            MapAnalyzer:HighlightObject(vuln.Object, colors[severity] or Color3.fromRGB(100, 100, 100))
         end
     end)
 
-    -- Edit Button (NEW!)
+    -- Edit Button
     local editBtn = Instance.new("TextButton")
     editBtn.Size = UDim2.new(0, 40, 0, 35)
     editBtn.Position = UDim2.new(1, -45, 0, 45)
@@ -886,10 +1075,14 @@ local function displayResults(results, filter)
     if filter == "All" or filter == "High" then
         for _, v in pairs(results.High) do createResultCard(v, "High") end
     end
+    if filter == "All" or filter == "HTTP" then
+        for _, v in pairs(results.HTTP) do createResultCard(v, "HTTP") end
+    end
 
     LowCard.Count.Text = tostring(#results.Low)
     MedCard.Count.Text = tostring(#results.Medium)
     HighCard.Count.Text = tostring(#results.High)
+    HTTPCard.Count.Text = tostring(#results.HTTP)
 end
 
 -- ==================== EVENT HANDLERS ====================
@@ -897,17 +1090,15 @@ end
 ScanBtn.MouseButton1Click:Connect(function()
     ScanBtn.Text = "⏳ SCANNING..."
     ScanBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+    ProgressFill.Size = UDim2.new(0, 0, 1, 0)
     wait(0.3)
     currentResults = MapAnalyzer:StartScan()
-    displayResults(currentResults, activeFilter)
-    ScanBtn.Text = "✅ SCAN COMPLETE"
-    wait(1)
-    ScanBtn.Text = "🔎 START SCAN"
+    ScanBtn.Text = "🔎 START DEEP SCAN"
     ScanBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 200)
 end)
 
 -- Tab Filters
-for _, tab in pairs({AllTab, LowTab, MedTab, HighTab}) do
+for _, tab in pairs({AllTab, LowTab, MedTab, HighTab, HTTPTab}) do
     tab.MouseButton1Click:Connect(function()
         activeFilter = tab.Name
         updateTabStyles()
@@ -917,57 +1108,32 @@ for _, tab in pairs({AllTab, LowTab, MedTab, HighTab}) do
     end)
 end
 
--- Minimize
-local minimized = false
-MinBtn.MouseButton1Click:Connect(function()
-    minimized = not minimized
-    MainFrame:TweenSize(
-        minimized and UDim2.new(0, 420, 0, 45) or UDim2.new(0, 420, 0, 550),
-        "Out", "Quad", 0.3, true
-    )
-    MinBtn.Text = minimized and "+" or "─"
-end)
-
--- Close
 CloseBtn.MouseButton1Click:Connect(function()
     ScreenGui:Destroy()
-end)
-
--- Info Button
-InfoBtn.MouseButton1Click:Connect(function()
-    InfoFrame.Visible = not InfoFrame.Visible
-end)
-
-InfoCloseBtn.MouseButton1Click:Connect(function()
-    InfoFrame.Visible = false
 end)
 
 EditorCloseBtn.MouseButton1Click:Connect(function()
     EditorFrame.Visible = false
 end)
 
--- Copy Path
-CopyPathBtn.MouseButton1Click:Connect(function()
-    setclipboard("E:\\CROT\\rosblok\\AdvancedMapAnalyzer.lua")
-    CopyPathBtn.Text = "✅ COPIED!"
-    wait(1)
-    CopyPathBtn.Text = "📋 COPY SCRIPT PATH"
-end)
+-- Progress update function
+function GUI_UpdateProgress(percent)
+    ProgressFill.Size = UDim2.new(percent / 100, 0, 1, 0)
+end
 
--- Copy Script Content
-CopyScriptBtn.MouseButton1Click:Connect(function()
-    local scriptContent = game:HttpGet("https://pastebin.com/raw/YOUR_PASTE_ID") -- Ganti dengan link script Anda
-    -- Atau gunakan script content langsung
-    CopyScriptBtn.Text = "✅ COPIED!"
-    wait(1)
-    CopyScriptBtn.Text = "📄 COPY SCRIPT CONTENT"
-end)
+-- Results update function
+function GUI_UpdateResults()
+    if currentResults then
+        displayResults(currentResults, activeFilter)
+    end
+end
 
 -- Init
 updateTabStyles()
-print("[MAP ANALYZER V2] Loaded! Advanced features enabled.")
-print("[V2] ✓ Duplicate Removal")
-print("[V2] ✓ Filter Tabs")
-print("[V2] ✓ Value Editor")
-print("[V2] ✓ Path Display")
-print("[V2] ✓ Copy Functions")
+print("[MAP ANALYZER V3] Loaded! Deep scan enabled.")
+print("[V3] ✓ Simplified GUI")
+print("[V3] ✓ Execute on input values")
+print("[V3] ✓ Deep scan ALL assets")
+print("[V3] ✓ Complete effect descriptions")
+print("[V3] ✓ Performance optimized")
+print("[V3] ✓ HTTP request tracking")
