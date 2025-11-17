@@ -1,0 +1,1442 @@
+--[[
+    ═══════════════════════════════════════════════════
+         ULTIMATE ROBLOX MAP ANALYZER
+         Compatible: Delta Android & PC
+         Version: 4.0 - FULL FEATURES
+    ═══════════════════════════════════════════════════
+
+    FEATURES:
+    ✓ Full GUI Support (Delta Android Compatible & Responsive)
+    ✓ Deep Scan ALL Assets (Hidden Folders & Random Names)
+    ✓ Smart Auto-Detect Vulnerabilities (Money, Level, Teleport, etc.)
+    ✓ Edit Value & Execute with Filter (Low/Medium/High)
+    ✓ HTTP Request Scanner (Play/Stop with Results)
+]]
+
+-- ==================== SERVICES ====================
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local ServerStorage = game:GetService("ServerStorage")
+local StarterGui = game:GetService("StarterGui")
+local StarterPack = game:GetService("StarterPack")
+local StarterPlayer = game:GetService("StarterPlayer")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- ==================== ANALYZER MODULE ====================
+local UltimateAnalyzer = {}
+UltimateAnalyzer.Results = {
+    Low = {},
+    Medium = {},
+    High = {},
+    HTTP = {},
+    TotalVulnerabilities = 0
+}
+
+UltimateAnalyzer.Settings = {
+    ScanRadius = 500,
+    MinExploitableHeight = 10,
+    BatchSize = 50,
+    YieldInterval = 100,
+    IgnoreNames = {"Baseplate", "Base", "Ground"}
+}
+
+-- HTTP Request Tracker
+local HTTPMonitor = {
+    IsMonitoring = false,
+    Requests = {},
+    OriginalGetAsync = nil,
+    OriginalPostAsync = nil
+}
+
+-- ==================== DEEP SCAN FUNCTIONS ====================
+
+-- Recursive deep scan - finds ALL objects including hidden ones
+local function deepScanRecursive(container, callback, processed, depth)
+    processed = processed or {}
+    depth = depth or 0
+    local count = 0
+    
+    local function scanObject(obj)
+        if processed[obj] then return end
+        processed[obj] = true
+        count = count + 1
+        
+        -- Process current object (even if name is random/hidden)
+        callback(obj, depth)
+        
+        -- Scan ALL children recursively (no filtering)
+        for _, child in pairs(obj:GetChildren()) do
+            scanObject(child)
+        end
+        
+        -- Yield periodically
+        if count % UltimateAnalyzer.Settings.YieldInterval == 0 then
+            wait()
+        end
+    end
+    
+    -- Start scanning
+    scanObject(container)
+    return count
+end
+
+-- Scan ALL services deeply
+local function scanAllServices(callback)
+    local processed = {}
+    local totalScanned = 0
+    
+    local services = {
+        Workspace,
+        ReplicatedStorage,
+        ServerStorage,
+        StarterGui,
+        StarterPack,
+        StarterPlayer,
+        playerGui,
+        player,
+        game:GetService("Lighting"),
+        game:GetService("SoundService"),
+        game:GetService("ReplicatedFirst")
+    }
+    
+    for _, service in pairs(services) do
+        pcall(function()
+            local count = deepScanRecursive(service, callback, processed)
+            totalScanned = totalScanned + count
+        end)
+    end
+    
+    return totalScanned
+end
+
+-- ==================== SMART VULNERABILITY DETECTION ====================
+
+-- Smart keyword detection for vulnerabilities
+local function isVulnerableValue(name, value)
+    local nameLower = string.lower(name)
+    
+    -- Money/Currency keywords
+    local moneyKeywords = {
+        "money", "cash", "coin", "gold", "gem", "crystal", "diamond",
+        "ruby", "token", "credit", "dollar", "currency", "wealth",
+        "balance", "bank", "fund", "treasure", "reward"
+    }
+    
+    -- Level/XP keywords
+    local levelKeywords = {
+        "level", "xp", "exp", "experience", "point", "score", "rank",
+        "tier", "prestige", "rebirth", "stage", "progress"
+    }
+    
+    -- Teleport/Position keywords
+    local teleportKeywords = {
+        "teleport", "tp", "warp", "summit", "finish", "end", "goal",
+        "checkpoint", "spawn", "position", "location", "destination"
+    }
+    
+    -- Status/Unlock keywords
+    local statusKeywords = {
+        "unlock", "lock", "enable", "disable", "active", "inactive",
+        "complete", "finish", "done", "achieve", "claim", "premium",
+        "vip", "admin", "owner", "mod", "developer"
+    }
+    
+    -- Speed/Stats keywords
+    local statsKeywords = {
+        "speed", "walk", "run", "jump", "health", "hp", "damage",
+        "power", "strength", "defense", "armor", "shield", "stamina"
+    }
+    
+    -- Check all categories
+    for _, keyword in pairs(moneyKeywords) do
+        if nameLower:match(keyword) then
+            return "Money", "💰 Currency/Value - Can modify money/currency"
+        end
+    end
+    
+    for _, keyword in pairs(levelKeywords) do
+        if nameLower:match(keyword) then
+            return "Level", "⭐ Level/XP - Can modify level or experience"
+        end
+    end
+    
+    for _, keyword in pairs(teleportKeywords) do
+        if nameLower:match(keyword) then
+            return "Teleport", "🚀 Teleport - Can teleport to location"
+        end
+    end
+    
+    for _, keyword in pairs(statusKeywords) do
+        if nameLower:match(keyword) then
+            return "Status", "🔓 Status/Unlock - Can unlock features"
+        end
+    end
+    
+    for _, keyword in pairs(statsKeywords) do
+        if nameLower:match(keyword) then
+            return "Stats", "⚔️ Stats - Can modify player stats"
+        end
+    end
+    
+    return nil, nil
+end
+
+-- Get vulnerability severity
+local function getSeverity(vulnType, obj)
+    if vulnType == "Money" or vulnType == "Level" then
+        return "High"
+    elseif vulnType == "Teleport" or vulnType == "Status" then
+        return "Medium"
+    elseif vulnType == "Stats" then
+        return "Low"
+    end
+    
+    -- Default based on object type
+    if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+        return "High"
+    elseif obj:IsA("ProximityPrompt") or obj:IsA("ClickDetector") then
+        return "Medium"
+    else
+        return "Low"
+    end
+end
+
+-- ==================== SCAN FUNCTIONS ====================
+
+function UltimateAnalyzer:ScanVulnerabilities()
+    print("[SCAN] Starting deep vulnerability scan...")
+    
+    self.Results = {
+        Low = {},
+        Medium = {},
+        High = {},
+        HTTP = {},
+        TotalVulnerabilities = 0
+    }
+    
+    local scannedCount = 0
+    
+    -- Scan all services
+    scannedCount = scanAllServices(function(obj, depth)
+        scannedCount = scannedCount + 1
+        
+        -- Check for Value objects
+        if obj:IsA("ValueBase") then
+            local vulnType, description = isVulnerableValue(obj.Name, obj.Value)
+            if vulnType then
+                local severity = getSeverity(vulnType, obj)
+                local vulnerability = {
+                    Type = vulnType,
+                    Name = obj.Name,
+                    Object = obj,
+                    Path = obj:GetFullName(),
+                    Description = description,
+                    CurrentValue = obj.Value,
+                    ValueType = obj.ClassName,
+                    Severity = severity,
+                    EditableProps = {
+                        {Name = "Value", Value = obj.Value, Type = self:getValueType(obj.Value)}
+                    }
+                }
+                
+                table.insert(self.Results[severity], vulnerability)
+            end
+        end
+        
+        -- Check for RemoteEvents/Functions
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            local vulnerability = {
+                Type = "Remote",
+                Name = obj.Name,
+                Object = obj,
+                Path = obj:GetFullName(),
+                Description = "📡 Remote " .. obj.ClassName .. " - Can be fired from client",
+                Severity = "High",
+                EditableProps = {}
+            }
+            table.insert(self.Results.High, vulnerability)
+        end
+        
+        -- Check for ProximityPrompts
+        if obj:IsA("ProximityPrompt") then
+            local parent = obj.Parent
+            local vulnerability = {
+                Type = "ProximityPrompt",
+                Name = obj.Name,
+                Object = parent or obj,
+                Path = obj:GetFullName(),
+                Description = "⚡ ProximityPrompt - Can be triggered",
+                Severity = "Medium",
+                EditableProps = {
+                    {Name = "MaxActivationDistance", Value = obj.MaxActivationDistance, Type = "number"},
+                    {Name = "HoldDuration", Value = obj.HoldDuration, Type = "number"},
+                    {Name = "Enabled", Value = obj.Enabled, Type = "boolean"}
+                }
+            }
+            table.insert(self.Results.Medium, vulnerability)
+        end
+        
+        -- Check for ClickDetectors
+        if obj:IsA("ClickDetector") then
+            local parent = obj.Parent
+            local vulnerability = {
+                Type = "ClickDetector",
+                Name = obj.Name,
+                Object = parent or obj,
+                Path = obj:GetFullName(),
+                Description = "🖱️ ClickDetector - Can be clicked",
+                Severity = "Medium",
+                EditableProps = {
+                    {Name = "MaxActivationDistance", Value = obj.MaxActivationDistance, Type = "number"}
+                }
+            }
+            table.insert(self.Results.Medium, vulnerability)
+        end
+        
+        -- Check for Teleport parts (Summit, Finish, etc.)
+        if obj:IsA("BasePart") then
+            local nameLower = string.lower(obj.Name)
+            if nameLower:match("summit") or nameLower:match("finish") or 
+               nameLower:match("end") or nameLower:match("goal") or
+               nameLower:match("checkpoint") then
+                local vulnerability = {
+                    Type = "Teleport",
+                    Name = obj.Name,
+                    Object = obj,
+                    Path = obj:GetFullName(),
+                    Description = "🚀 Teleport Location: " .. obj.Name,
+                    Position = obj.Position,
+                    Severity = "Medium",
+                    EditableProps = {
+                        {Name = "Position", Value = obj.Position, Type = "vector3"},
+                        {Name = "Anchored", Value = obj.Anchored, Type = "boolean"}
+                    }
+                }
+                table.insert(self.Results.Medium, vulnerability)
+            end
+        end
+        
+        -- Update progress
+        if scannedCount % 500 == 0 and GUI_UpdateScanProgress then
+            GUI_UpdateScanProgress(scannedCount)
+        end
+    end)
+    
+    self.Results.TotalVulnerabilities = 
+        #self.Results.Low + #self.Results.Medium + #self.Results.High
+    
+    print("[SCAN] Complete! Scanned " .. scannedCount .. " objects")
+    print("[SCAN] Found: " .. self.Results.TotalVulnerabilities .. " vulnerabilities")
+    
+    if GUI_ScanComplete then
+        GUI_ScanComplete()
+    end
+    
+    return self.Results
+end
+
+function UltimateAnalyzer:getValueType(value)
+    local valueType = type(value)
+    if valueType == "number" then
+        if math.floor(value) == value then
+            return "number"
+        else
+            return "number"
+        end
+    elseif valueType == "boolean" then
+        return "boolean"
+    elseif valueType == "string" then
+        return "string"
+    elseif valueType == "Vector3" then
+        return "vector3"
+    else
+        return "string"
+    end
+end
+
+-- ==================== HTTP REQUEST MONITOR ====================
+
+function HTTPMonitor:StartMonitoring()
+    if self.IsMonitoring then return end
+    
+    self.IsMonitoring = true
+    self.Requests = {}
+    
+    print("[HTTP] Monitoring started...")
+    
+    -- Try to hook HttpService
+    pcall(function()
+        local mt = getrawmetatable(HttpService)
+        if mt then
+            local oldIndex = mt.__index
+            mt.__index = function(self, key)
+                if key == "GetAsync" then
+                    return function(url, ...)
+                        table.insert(HTTPMonitor.Requests, {
+                            Type = "GET",
+                            URL = url,
+                            Time = tick(),
+                            Script = getfenv(2).script and getfenv(2).script:GetFullName() or "Unknown"
+                        })
+                        return oldIndex(self, key)(url, ...)
+                    end
+                elseif key == "PostAsync" then
+                    return function(url, data, ...)
+                        table.insert(HTTPMonitor.Requests, {
+                            Type = "POST",
+                            URL = url,
+                            Data = data,
+                            Time = tick(),
+                            Script = getfenv(2).script and getfenv(2).script:GetFullName() or "Unknown"
+                        })
+                        return oldIndex(self, key)(url, data, ...)
+                    end
+                end
+                return oldIndex(self, key)
+            end
+        end
+    end)
+    
+    -- Also scan scripts for HTTP requests
+    spawn(function()
+        while self.IsMonitoring do
+            scanAllServices(function(obj)
+                if obj:IsA("BaseScript") or obj:IsA("ModuleScript") then
+                    pcall(function()
+                        local source = obj.Source
+                        if source then
+                            -- Find HTTP requests
+                            for url in source:gmatch("['\"](https?://[^'\"]+)['\"]") do
+                                local found = false
+                                for _, req in pairs(self.Requests) do
+                                    if req.URL == url and req.Script == obj:GetFullName() then
+                                        found = true
+                                        break
+                                    end
+                                end
+                                if not found then
+                                    table.insert(self.Requests, {
+                                        Type = "FOUND",
+                                        URL = url,
+                                        Time = tick(),
+                                        Script = obj:GetFullName(),
+                                        ScriptContent = source
+                                    })
+                                end
+                            end
+                        end
+                    end)
+                end
+            end)
+            wait(2) -- Scan every 2 seconds
+        end
+    end)
+end
+
+function HTTPMonitor:StopMonitoring()
+    self.IsMonitoring = false
+    print("[HTTP] Monitoring stopped. Found " .. #self.Requests .. " requests")
+end
+
+-- ==================== GUI MODULE ====================
+
+if playerGui:FindFirstChild("UltimateAnalyzerGUI") then
+    playerGui:FindFirstChild("UltimateAnalyzerGUI"):Destroy()
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "UltimateAnalyzerGUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = playerGui
+
+-- Detect device type
+local isMobile = UserInputService.TouchEnabled
+local screenSize = Workspace.CurrentCamera.ViewportSize
+local guiScale = math.min(screenSize.X / 400, screenSize.Y / 700)
+guiScale = math.clamp(guiScale, 0.8, 1.2)
+
+-- Main Frame
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, math.floor(450 * guiScale), 0, math.floor(650 * guiScale))
+MainFrame.Position = UDim2.new(0.5, -math.floor(225 * guiScale), 0.5, -math.floor(325 * guiScale))
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 16)
+MainCorner.Parent = MainFrame
+
+-- Header
+local Header = Instance.new("Frame")
+Header.Size = UDim2.new(1, 0, 0, math.floor(50 * guiScale))
+Header.BackgroundColor3 = Color3.fromRGB(30, 30, 42)
+Header.BorderSizePixel = 0
+Header.Parent = MainFrame
+
+local HeaderCorner = Instance.new("UICorner")
+HeaderCorner.CornerRadius = UDim.new(0, 16)
+HeaderCorner.Parent = Header
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -math.floor(100 * guiScale), 1, 0)
+Title.Position = UDim2.new(0, 15, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "🔍 ULTIMATE MAP ANALYZER"
+Title.TextColor3 = Color3.fromRGB(100, 180, 255)
+Title.TextSize = math.floor(16 * guiScale)
+Title.Font = Enum.Font.GothamBold
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = Header
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, math.floor(40 * guiScale), 0, math.floor(40 * guiScale))
+CloseBtn.Position = UDim2.new(1, -math.floor(45 * guiScale), 0, 5)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+CloseBtn.Text = "✕"
+CloseBtn.TextColor3 = Color3.new(1, 1, 1)
+CloseBtn.TextSize = math.floor(18 * guiScale)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.Parent = Header
+
+local CloseCorner = Instance.new("UICorner")
+CloseCorner.CornerRadius = UDim.new(0, 8)
+CloseCorner.Parent = CloseBtn
+
+-- Tab System
+local TabBar = Instance.new("Frame")
+TabBar.Size = UDim2.new(1, -20, 0, math.floor(40 * guiScale))
+TabBar.Position = UDim2.new(0, 10, 0, math.floor(60 * guiScale))
+TabBar.BackgroundTransparency = 1
+TabBar.Parent = MainFrame
+
+local TabLayout = Instance.new("UIListLayout")
+TabLayout.FillDirection = Enum.FillDirection.Horizontal
+TabLayout.Padding = UDim.new(0, 5)
+TabLayout.Parent = TabBar
+
+local tabs = {"Scan", "Low", "Med", "High", "HTTP"}
+local tabButtons = {}
+local tabContents = {}
+local activeTab = "Scan"
+
+local function createTab(name)
+    local tabBtn = Instance.new("TextButton")
+    tabBtn.Size = UDim2.new(0, math.floor(75 * guiScale), 1, 0)
+    tabBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+    tabBtn.Text = name
+    tabBtn.TextColor3 = Color3.fromRGB(150, 150, 150)
+    tabBtn.TextSize = math.floor(12 * guiScale)
+    tabBtn.Font = Enum.Font.GothamBold
+    tabBtn.Parent = TabBar
+    
+    local tabCorner = Instance.new("UICorner")
+    tabCorner.CornerRadius = UDim.new(0, 8)
+    tabCorner.Parent = tabBtn
+    
+    local content = Instance.new("ScrollingFrame")
+    content.Name = name .. "Content"
+    content.Size = UDim2.new(1, -20, 1, -math.floor(110 * guiScale))
+    content.Position = UDim2.new(0, 10, 0, math.floor(110 * guiScale))
+    content.BackgroundTransparency = 1
+    content.BorderSizePixel = 0
+    content.ScrollBarThickness = 6
+    content.CanvasSize = UDim2.new(0, 0, 0, 0)
+    content.Visible = (name == "Scan")
+    content.Parent = MainFrame
+    
+    local contentLayout = Instance.new("UIListLayout")
+    contentLayout.Padding = UDim.new(0, 8)
+    contentLayout.Parent = content
+    
+    contentLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        content.CanvasSize = UDim2.new(0, 0, 0, contentLayout.AbsoluteContentSize.Y + 10)
+    end)
+    
+    tabButtons[name] = tabBtn
+    tabContents[name] = content
+    
+    tabBtn.MouseButton1Click:Connect(function()
+        activeTab = name
+        for n, btn in pairs(tabButtons) do
+            if n == name then
+                btn.BackgroundColor3 = Color3.fromRGB(60, 120, 220)
+                btn.TextColor3 = Color3.new(1, 1, 1)
+            else
+                btn.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+                btn.TextColor3 = Color3.fromRGB(150, 150, 150)
+            end
+        end
+        for n, cont in pairs(tabContents) do
+            cont.Visible = (n == name)
+        end
+    end)
+end
+
+for _, tabName in pairs(tabs) do
+    createTab(tabName)
+end
+
+-- Scan Tab Content
+local scanContent = tabContents["Scan"]
+
+local ScanBtn = Instance.new("TextButton")
+ScanBtn.Size = UDim2.new(1, 0, 0, math.floor(50 * guiScale))
+ScanBtn.BackgroundColor3 = Color3.fromRGB(60, 120, 220)
+ScanBtn.Text = "🔎 START DEEP SCAN"
+ScanBtn.TextColor3 = Color3.new(1, 1, 1)
+ScanBtn.TextSize = math.floor(16 * guiScale)
+ScanBtn.Font = Enum.Font.GothamBold
+ScanBtn.Parent = scanContent
+
+local ScanCorner = Instance.new("UICorner")
+ScanCorner.CornerRadius = UDim.new(0, 10)
+ScanCorner.Parent = ScanBtn
+
+local ProgressBar = Instance.new("Frame")
+ProgressBar.Size = UDim2.new(1, 0, 0, math.floor(10 * guiScale))
+ProgressBar.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+ProgressBar.Parent = scanContent
+
+local ProgressCorner = Instance.new("UICorner")
+ProgressCorner.CornerRadius = UDim.new(0, 5)
+ProgressCorner.Parent = ProgressBar
+
+local ProgressFill = Instance.new("Frame")
+ProgressFill.Size = UDim2.new(0, 0, 1, 0)
+ProgressFill.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+ProgressFill.Parent = ProgressBar
+
+local ProgressCorner2 = Instance.new("UICorner")
+ProgressCorner2.CornerRadius = UDim.new(0, 5)
+ProgressCorner2.Parent = ProgressFill
+
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Size = UDim2.new(1, 0, 0, math.floor(30 * guiScale))
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text = "Ready to scan"
+StatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+StatusLabel.TextSize = math.floor(12 * guiScale)
+StatusLabel.Font = Enum.Font.Gotham
+StatusLabel.TextWrapped = true
+StatusLabel.Parent = scanContent
+
+-- Stats
+local StatsFrame = Instance.new("Frame")
+StatsFrame.Size = UDim2.new(1, 0, 0, math.floor(80 * guiScale))
+StatsFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+StatsFrame.Parent = scanContent
+
+local StatsCorner = Instance.new("UICorner")
+StatsCorner.CornerRadius = UDim.new(0, 10)
+StatsCorner.Parent = StatsFrame
+
+local StatsLayout = Instance.new("UIListLayout")
+StatsLayout.FillDirection = Enum.FillDirection.Horizontal
+StatsLayout.Padding = UDim.new(0, 10)
+StatsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+StatsLayout.Parent = StatsFrame
+
+local function createStatCard(title, color)
+    local card = Instance.new("Frame")
+    card.Size = UDim2.new(0, math.floor(80 * guiScale), 0, math.floor(70 * guiScale))
+    card.BackgroundColor3 = color
+    card.Parent = StatsFrame
+    
+    local cardCorner = Instance.new("UICorner")
+    cardCorner.CornerRadius = UDim.new(0, 8)
+    cardCorner.Parent = card
+    
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 0, math.floor(25 * guiScale))
+    label.BackgroundTransparency = 1
+    label.Text = title
+    label.TextColor3 = Color3.new(1, 1, 1)
+    label.TextSize = math.floor(11 * guiScale)
+    label.Font = Enum.Font.Gotham
+    label.Parent = card
+    
+    local count = Instance.new("TextLabel")
+    count.Name = "Count"
+    count.Size = UDim2.new(1, 0, 0, math.floor(40 * guiScale))
+    count.Position = UDim2.new(0, 0, 0, math.floor(25 * guiScale))
+    count.BackgroundTransparency = 1
+    count.Text = "0"
+    count.TextColor3 = Color3.new(1, 1, 1)
+    count.TextSize = math.floor(24 * guiScale)
+    count.Font = Enum.Font.GothamBold
+    count.Parent = card
+    
+    return card
+end
+
+local LowStat = createStatCard("LOW", Color3.fromRGB(50, 150, 50))
+local MedStat = createStatCard("MED", Color3.fromRGB(200, 150, 50))
+local HighStat = createStatCard("HIGH", Color3.fromRGB(200, 50, 50))
+
+-- HTTP Monitor Tab
+local httpContent = tabContents["HTTP"]
+
+local HTTPPlayBtn = Instance.new("TextButton")
+HTTPPlayBtn.Size = UDim2.new(0.48, -5, 0, math.floor(45 * guiScale))
+HTTPPlayBtn.Position = UDim2.new(0, 0, 0, 0)
+HTTPPlayBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+HTTPPlayBtn.Text = "▶️ START"
+HTTPPlayBtn.TextColor3 = Color3.new(1, 1, 1)
+HTTPPlayBtn.TextSize = math.floor(14 * guiScale)
+HTTPPlayBtn.Font = Enum.Font.GothamBold
+HTTPPlayBtn.Parent = httpContent
+
+local HTTPPlayCorner = Instance.new("UICorner")
+HTTPPlayCorner.CornerRadius = UDim.new(0, 8)
+HTTPPlayCorner.Parent = HTTPPlayBtn
+
+local HTTPStopBtn = Instance.new("TextButton")
+HTTPStopBtn.Size = UDim2.new(0.48, -5, 0, math.floor(45 * guiScale))
+HTTPStopBtn.Position = UDim2.new(0.52, 0, 0, 0)
+HTTPStopBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+HTTPStopBtn.Text = "⏹️ STOP"
+HTTPStopBtn.TextColor3 = Color3.new(1, 1, 1)
+HTTPStopBtn.TextSize = math.floor(14 * guiScale)
+HTTPStopBtn.Font = Enum.Font.GothamBold
+HTTPStopBtn.Parent = httpContent
+
+local HTTPStopCorner = Instance.new("UICorner")
+HTTPStopCorner.CornerRadius = UDim.new(0, 8)
+HTTPStopCorner.Parent = HTTPStopBtn
+
+local HTTPStatusLabel = Instance.new("TextLabel")
+HTTPStatusLabel.Size = UDim2.new(1, 0, 0, math.floor(30 * guiScale))
+HTTPStatusLabel.Position = UDim2.new(0, 0, 0, math.floor(50 * guiScale))
+HTTPStatusLabel.BackgroundTransparency = 1
+HTTPStatusLabel.Text = "Status: Stopped"
+HTTPStatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+HTTPStatusLabel.TextSize = math.floor(12 * guiScale)
+HTTPStatusLabel.Font = Enum.Font.Gotham
+HTTPStatusLabel.Parent = httpContent
+
+local HTTPResultsScroll = Instance.new("ScrollingFrame")
+HTTPResultsScroll.Size = UDim2.new(1, 0, 1, -math.floor(90 * guiScale))
+HTTPResultsScroll.Position = UDim2.new(0, 0, 0, math.floor(85 * guiScale))
+HTTPResultsScroll.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+HTTPResultsScroll.BorderSizePixel = 0
+HTTPResultsScroll.ScrollBarThickness = 6
+HTTPResultsScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+HTTPResultsScroll.Parent = httpContent
+
+local HTTPResultsLayout = Instance.new("UIListLayout")
+HTTPResultsLayout.Padding = UDim.new(0, 8)
+HTTPResultsLayout.Parent = HTTPResultsScroll
+
+HTTPResultsLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    HTTPResultsScroll.CanvasSize = UDim2.new(0, 0, 0, HTTPResultsLayout.AbsoluteContentSize.Y + 10)
+end)
+
+-- ==================== VULNERABILITY CARD CREATOR ====================
+
+local function createVulnCard(vuln, parent)
+    local colors = {
+        Low = Color3.fromRGB(50, 150, 50),
+        Medium = Color3.fromRGB(200, 150, 50),
+        High = Color3.fromRGB(200, 50, 50)
+    }
+    
+    local card = Instance.new("Frame")
+    card.Size = UDim2.new(1, 0, 0, math.floor(120 * guiScale))
+    card.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+    card.Parent = parent
+    
+    local cardCorner = Instance.new("UICorner")
+    cardCorner.CornerRadius = UDim.new(0, 10)
+    cardCorner.Parent = card
+    
+    local border = Instance.new("UIStroke")
+    border.Color = colors[vuln.Severity] or Color3.fromRGB(100, 100, 100)
+    border.Thickness = 2
+    border.Parent = card
+    
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Size = UDim2.new(1, -math.floor(100 * guiScale), 0, math.floor(25 * guiScale))
+    nameLabel.Position = UDim2.new(0, 10, 0, 5)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Text = vuln.Type .. ": " .. vuln.Name
+    nameLabel.TextColor3 = Color3.new(1, 1, 1)
+    nameLabel.TextSize = math.floor(13 * guiScale)
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    nameLabel.Parent = card
+    
+    local descLabel = Instance.new("TextLabel")
+    descLabel.Size = UDim2.new(1, -math.floor(100 * guiScale), 0, math.floor(40 * guiScale))
+    descLabel.Position = UDim2.new(0, 10, 0, math.floor(30 * guiScale))
+    descLabel.BackgroundTransparency = 1
+    descLabel.Text = vuln.Description
+    descLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+    descLabel.TextSize = math.floor(11 * guiScale)
+    descLabel.Font = Enum.Font.Gotham
+    descLabel.TextXAlignment = Enum.TextXAlignment.Left
+    descLabel.TextWrapped = true
+    descLabel.Parent = card
+    
+    local pathLabel = Instance.new("TextLabel")
+    pathLabel.Size = UDim2.new(1, -math.floor(100 * guiScale), 0, math.floor(30 * guiScale))
+    pathLabel.Position = UDim2.new(0, 10, 0, math.floor(70 * guiScale))
+    pathLabel.BackgroundTransparency = 1
+    pathLabel.Text = "📁 " .. vuln.Path
+    pathLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+    pathLabel.TextSize = math.floor(9 * guiScale)
+    pathLabel.Font = Enum.Font.Code
+    pathLabel.TextXAlignment = Enum.TextXAlignment.Left
+    pathLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    pathLabel.Parent = card
+    
+    -- Edit Button
+    local editBtn = Instance.new("TextButton")
+    editBtn.Size = UDim2.new(0, math.floor(85 * guiScale), 0, math.floor(50 * guiScale))
+    editBtn.Position = UDim2.new(1, -math.floor(90 * guiScale), 0, 10)
+    editBtn.BackgroundColor3 = Color3.fromRGB(60, 120, 220)
+    editBtn.Text = "✏️ EDIT"
+    editBtn.TextColor3 = Color3.new(1, 1, 1)
+    editBtn.TextSize = math.floor(12 * guiScale)
+    editBtn.Font = Enum.Font.GothamBold
+    editBtn.Parent = card
+    
+    local editCorner = Instance.new("UICorner")
+    editCorner.CornerRadius = UDim.new(0, 8)
+    editCorner.Parent = editBtn
+    
+    -- Teleport Button (if has position)
+    if vuln.Position then
+        local tpBtn = Instance.new("TextButton")
+        tpBtn.Size = UDim2.new(0, math.floor(85 * guiScale), 0, math.floor(50 * guiScale))
+        tpBtn.Position = UDim2.new(1, -math.floor(90 * guiScale), 0, math.floor(65 * guiScale))
+        tpBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+        tpBtn.Text = "📍 TP"
+        tpBtn.TextColor3 = Color3.new(1, 1, 1)
+        tpBtn.TextSize = math.floor(12 * guiScale)
+        tpBtn.Font = Enum.Font.GothamBold
+        tpBtn.Parent = card
+        
+        local tpCorner = Instance.new("UICorner")
+        tpCorner.CornerRadius = UDim.new(0, 8)
+        tpCorner.Parent = tpBtn
+        
+        tpBtn.MouseButton1Click:Connect(function()
+            local char = player.Character
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                char.HumanoidRootPart.CFrame = CFrame.new(vuln.Position + Vector3.new(0, 5, 0))
+            end
+        end)
+    end
+    
+    editBtn.MouseButton1Click:Connect(function()
+        showValueEditor(vuln)
+    end)
+    
+    return card
+end
+
+-- ==================== VALUE EDITOR ====================
+
+local EditorFrame = Instance.new("Frame")
+EditorFrame.Size = UDim2.new(0, math.floor(400 * guiScale), 0, math.floor(500 * guiScale))
+EditorFrame.Position = UDim2.new(0.5, -math.floor(200 * guiScale), 0.5, -math.floor(250 * guiScale))
+EditorFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+EditorFrame.Visible = false
+EditorFrame.Parent = ScreenGui
+
+local EditorCorner = Instance.new("UICorner")
+EditorCorner.CornerRadius = UDim.new(0, 12)
+EditorCorner.Parent = EditorFrame
+
+local EditorHeader = Instance.new("Frame")
+EditorHeader.Size = UDim2.new(1, 0, 0, math.floor(45 * guiScale))
+EditorHeader.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+EditorHeader.Parent = EditorFrame
+
+local EditorTitle = Instance.new("TextLabel")
+EditorTitle.Size = UDim2.new(1, -math.floor(50 * guiScale), 1, 0)
+EditorTitle.Position = UDim2.new(0, 10, 0, 0)
+EditorTitle.BackgroundTransparency = 1
+EditorTitle.Text = "✏️ EDIT VALUE"
+EditorTitle.TextColor3 = Color3.new(1, 1, 1)
+EditorTitle.TextSize = math.floor(16 * guiScale)
+EditorTitle.Font = Enum.Font.GothamBold
+EditorTitle.TextXAlignment = Enum.TextXAlignment.Left
+EditorTitle.Parent = EditorHeader
+
+local EditorCloseBtn = Instance.new("TextButton")
+EditorCloseBtn.Size = UDim2.new(0, math.floor(35 * guiScale), 0, math.floor(35 * guiScale))
+EditorCloseBtn.Position = UDim2.new(1, -math.floor(40 * guiScale), 0, 5)
+EditorCloseBtn.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+EditorCloseBtn.Text = "✕"
+EditorCloseBtn.TextColor3 = Color3.new(1, 1, 1)
+EditorCloseBtn.TextSize = math.floor(16 * guiScale)
+EditorCloseBtn.Font = Enum.Font.GothamBold
+EditorCloseBtn.Parent = EditorHeader
+
+local EditorCloseCorner = Instance.new("UICorner")
+EditorCloseCorner.CornerRadius = UDim.new(0, 8)
+EditorCloseCorner.Parent = EditorCloseBtn
+
+local EditorScroll = Instance.new("ScrollingFrame")
+EditorScroll.Size = UDim2.new(1, -20, 1, -math.floor(50 * guiScale))
+EditorScroll.Position = UDim2.new(0, 10, 0, math.floor(50 * guiScale))
+EditorScroll.BackgroundTransparency = 1
+EditorScroll.ScrollBarThickness = 6
+EditorScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+EditorScroll.Parent = EditorFrame
+
+local EditorScrollLayout = Instance.new("UIListLayout")
+EditorScrollLayout.Padding = UDim.new(0, 10)
+EditorScrollLayout.Parent = EditorScroll
+
+EditorScrollLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    EditorScroll.CanvasSize = UDim2.new(0, 0, 0, EditorScrollLayout.AbsoluteContentSize.Y + 10)
+end)
+
+function showValueEditor(vuln)
+    EditorFrame.Visible = true
+    
+    -- Clear previous content
+    for _, child in pairs(EditorScroll:GetChildren()) do
+        if not child:IsA("UIListLayout") then
+            child:Destroy()
+        end
+    end
+    
+    -- Show path
+    local pathLabel = Instance.new("TextLabel")
+    pathLabel.Size = UDim2.new(1, 0, 0, math.floor(50 * guiScale))
+    pathLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    pathLabel.Text = "Path: " .. vuln.Path
+    pathLabel.TextColor3 = Color3.fromRGB(150, 150, 255)
+    pathLabel.TextSize = math.floor(11 * guiScale)
+    pathLabel.Font = Enum.Font.Code
+    pathLabel.TextWrapped = true
+    pathLabel.Parent = EditorScroll
+    
+    local pathCorner = Instance.new("UICorner")
+    pathCorner.CornerRadius = UDim.new(0, 8)
+    pathCorner.Parent = pathLabel
+    
+    -- Edit properties
+    for _, prop in pairs(vuln.EditableProps) do
+        local propFrame = Instance.new("Frame")
+        propFrame.Size = UDim2.new(1, 0, 0, math.floor(80 * guiScale))
+        propFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
+        propFrame.Parent = EditorScroll
+        
+        local propCorner = Instance.new("UICorner")
+        propCorner.CornerRadius = UDim.new(0, 8)
+        propCorner.Parent = propFrame
+        
+        local propName = Instance.new("TextLabel")
+        propName.Size = UDim2.new(1, -10, 0, math.floor(25 * guiScale))
+        propName.Position = UDim2.new(0, 5, 0, 5)
+        propName.BackgroundTransparency = 1
+        propName.Text = prop.Name .. " (" .. prop.Type .. ")"
+        propName.TextColor3 = Color3.fromRGB(255, 255, 100)
+        propName.TextSize = math.floor(12 * guiScale)
+        propName.Font = Enum.Font.GothamBold
+        propName.TextXAlignment = Enum.TextXAlignment.Left
+        propName.Parent = propFrame
+        
+        if prop.Type == "number" then
+            local input = Instance.new("TextBox")
+            input.Size = UDim2.new(0.65, -5, 0, math.floor(35 * guiScale))
+            input.Position = UDim2.new(0, 5, 0, math.floor(35 * guiScale))
+            input.BackgroundColor3 = Color3.fromRGB(55, 55, 70)
+            input.Text = tostring(prop.Value)
+            input.TextColor3 = Color3.new(1, 1, 1)
+            input.TextSize = math.floor(13 * guiScale)
+            input.Font = Enum.Font.Code
+            input.PlaceholderText = "Enter number..."
+            input.Parent = propFrame
+            
+            local inputCorner = Instance.new("UICorner")
+            inputCorner.CornerRadius = UDim.new(0, 6)
+            inputCorner.Parent = input
+            
+            local execBtn = Instance.new("TextButton")
+            execBtn.Size = UDim2.new(0.35, -10, 0, math.floor(35 * guiScale))
+            execBtn.Position = UDim2.new(0.65, 5, 0, math.floor(35 * guiScale))
+            execBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+            execBtn.Text = "✅ EXECUTE"
+            execBtn.TextColor3 = Color3.new(1, 1, 1)
+            execBtn.TextSize = math.floor(12 * guiScale)
+            execBtn.Font = Enum.Font.GothamBold
+            execBtn.Parent = propFrame
+            
+            local execCorner = Instance.new("UICorner")
+            execCorner.CornerRadius = UDim.new(0, 6)
+            execCorner.Parent = execBtn
+            
+            execBtn.MouseButton1Click:Connect(function()
+                local num = tonumber(input.Text)
+                if num and vuln.Object then
+                    pcall(function()
+                        if vuln.Object:IsA("ValueBase") then
+                            vuln.Object.Value = num
+                        else
+                            vuln.Object[prop.Name] = num
+                        end
+                        execBtn.Text = "✅ DONE"
+                        execBtn.BackgroundColor3 = Color3.fromRGB(50, 255, 50)
+                        wait(0.5)
+                        execBtn.Text = "✅ EXECUTE"
+                        execBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+                    end)
+                end
+            end)
+            
+        elseif prop.Type == "string" then
+            local input = Instance.new("TextBox")
+            input.Size = UDim2.new(0.65, -5, 0, math.floor(35 * guiScale))
+            input.Position = UDim2.new(0, 5, 0, math.floor(35 * guiScale))
+            input.BackgroundColor3 = Color3.fromRGB(55, 55, 70)
+            input.Text = tostring(prop.Value)
+            input.TextColor3 = Color3.new(1, 1, 1)
+            input.TextSize = math.floor(13 * guiScale)
+            input.Font = Enum.Font.Code
+            input.PlaceholderText = "Enter text..."
+            input.Parent = propFrame
+            
+            local inputCorner = Instance.new("UICorner")
+            inputCorner.CornerRadius = UDim.new(0, 6)
+            inputCorner.Parent = input
+            
+            local execBtn = Instance.new("TextButton")
+            execBtn.Size = UDim2.new(0.35, -10, 0, math.floor(35 * guiScale))
+            execBtn.Position = UDim2.new(0.65, 5, 0, math.floor(35 * guiScale))
+            execBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+            execBtn.Text = "✅ EXECUTE"
+            execBtn.TextColor3 = Color3.new(1, 1, 1)
+            execBtn.TextSize = math.floor(12 * guiScale)
+            execBtn.Font = Enum.Font.GothamBold
+            execBtn.Parent = propFrame
+            
+            local execCorner = Instance.new("UICorner")
+            execCorner.CornerRadius = UDim.new(0, 6)
+            execCorner.Parent = execBtn
+            
+            execBtn.MouseButton1Click:Connect(function()
+                if vuln.Object and input.Text ~= "" then
+                    pcall(function()
+                        if vuln.Object:IsA("ValueBase") then
+                            vuln.Object.Value = input.Text
+                        else
+                            vuln.Object[prop.Name] = input.Text
+                        end
+                        execBtn.Text = "✅ DONE"
+                        execBtn.BackgroundColor3 = Color3.fromRGB(50, 255, 50)
+                        wait(0.5)
+                        execBtn.Text = "✅ EXECUTE"
+                        execBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+                    end)
+                end
+            end)
+            
+        elseif prop.Type == "boolean" then
+            local trueBtn = Instance.new("TextButton")
+            trueBtn.Size = UDim2.new(0.48, -5, 0, math.floor(35 * guiScale))
+            trueBtn.Position = UDim2.new(0, 5, 0, math.floor(35 * guiScale))
+            trueBtn.BackgroundColor3 = prop.Value and Color3.fromRGB(50, 200, 50) or Color3.fromRGB(60, 60, 70)
+            trueBtn.Text = "✅ TRUE"
+            trueBtn.TextColor3 = Color3.new(1, 1, 1)
+            trueBtn.TextSize = math.floor(12 * guiScale)
+            trueBtn.Font = Enum.Font.GothamBold
+            trueBtn.Parent = propFrame
+            
+            local trueCorner = Instance.new("UICorner")
+            trueCorner.CornerRadius = UDim.new(0, 6)
+            trueCorner.Parent = trueBtn
+            
+            local falseBtn = Instance.new("TextButton")
+            falseBtn.Size = UDim2.new(0.48, -5, 0, math.floor(35 * guiScale))
+            falseBtn.Position = UDim2.new(0.52, 0, 0, math.floor(35 * guiScale))
+            falseBtn.BackgroundColor3 = not prop.Value and Color3.fromRGB(200, 50, 50) or Color3.fromRGB(60, 60, 70)
+            falseBtn.Text = "❌ FALSE"
+            falseBtn.TextColor3 = Color3.new(1, 1, 1)
+            falseBtn.TextSize = math.floor(12 * guiScale)
+            falseBtn.Font = Enum.Font.GothamBold
+            falseBtn.Parent = propFrame
+            
+            local falseCorner = Instance.new("UICorner")
+            falseCorner.CornerRadius = UDim.new(0, 6)
+            falseCorner.Parent = falseBtn
+            
+            trueBtn.MouseButton1Click:Connect(function()
+                if vuln.Object then
+                    pcall(function()
+                        vuln.Object[prop.Name] = true
+                        trueBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+                        falseBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+                    end)
+                end
+            end)
+            
+            falseBtn.MouseButton1Click:Connect(function()
+                if vuln.Object then
+                    pcall(function()
+                        vuln.Object[prop.Name] = false
+                        trueBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+                        falseBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+                    end)
+                end
+            end)
+            
+        elseif prop.Type == "vector3" then
+            local vec = prop.Value
+            local inputX = Instance.new("TextBox")
+            inputX.Size = UDim2.new(0.22, 0, 0, math.floor(35 * guiScale))
+            inputX.Position = UDim2.new(0, 5, 0, math.floor(35 * guiScale))
+            inputX.BackgroundColor3 = Color3.fromRGB(55, 55, 70)
+            inputX.Text = tostring(math.floor(vec.X))
+            inputX.TextColor3 = Color3.new(1, 1, 1)
+            inputX.TextSize = math.floor(11 * guiScale)
+            inputX.Font = Enum.Font.Code
+            inputX.PlaceholderText = "X"
+            inputX.Parent = propFrame
+            
+            local inputY = Instance.new("TextBox")
+            inputY.Size = UDim2.new(0.22, 0, 0, math.floor(35 * guiScale))
+            inputY.Position = UDim2.new(0.24, 0, 0, math.floor(35 * guiScale))
+            inputY.BackgroundColor3 = Color3.fromRGB(55, 55, 70)
+            inputY.Text = tostring(math.floor(vec.Y))
+            inputY.TextColor3 = Color3.new(1, 1, 1)
+            inputY.TextSize = math.floor(11 * guiScale)
+            inputY.Font = Enum.Font.Code
+            inputY.PlaceholderText = "Y"
+            inputY.Parent = propFrame
+            
+            local inputZ = Instance.new("TextBox")
+            inputZ.Size = UDim2.new(0.22, 0, 0, math.floor(35 * guiScale))
+            inputZ.Position = UDim2.new(0.48, 0, 0, math.floor(35 * guiScale))
+            inputZ.BackgroundColor3 = Color3.fromRGB(55, 55, 70)
+            inputZ.Text = tostring(math.floor(vec.Z))
+            inputZ.TextColor3 = Color3.new(1, 1, 1)
+            inputZ.TextSize = math.floor(11 * guiScale)
+            inputZ.Font = Enum.Font.Code
+            inputZ.PlaceholderText = "Z"
+            inputZ.Parent = propFrame
+            
+            local execBtn = Instance.new("TextButton")
+            execBtn.Size = UDim2.new(0.28, -10, 0, math.floor(35 * guiScale))
+            execBtn.Position = UDim2.new(0.72, 5, 0, math.floor(35 * guiScale))
+            execBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+            execBtn.Text = "✅ EXEC"
+            execBtn.TextColor3 = Color3.new(1, 1, 1)
+            execBtn.TextSize = math.floor(11 * guiScale)
+            execBtn.Font = Enum.Font.GothamBold
+            execBtn.Parent = propFrame
+            
+            local execCorner = Instance.new("UICorner")
+            execCorner.CornerRadius = UDim.new(0, 6)
+            execCorner.Parent = execBtn
+            
+            execBtn.MouseButton1Click:Connect(function()
+                local x, y, z = tonumber(inputX.Text), tonumber(inputY.Text), tonumber(inputZ.Text)
+                if x and y and z and vuln.Object then
+                    pcall(function()
+                        vuln.Object[prop.Name] = Vector3.new(x, y, z)
+                        execBtn.Text = "✅"
+                        execBtn.BackgroundColor3 = Color3.fromRGB(50, 255, 50)
+                        wait(0.5)
+                        execBtn.Text = "✅ EXEC"
+                        execBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+                    end)
+                end
+            end)
+        end
+    end
+end
+
+-- ==================== EVENT HANDLERS ====================
+
+ScanBtn.MouseButton1Click:Connect(function()
+    ScanBtn.Text = "⏳ SCANNING..."
+    ScanBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+    ProgressFill.Size = UDim2.new(0, 0, 1, 0)
+    StatusLabel.Text = "Scanning all assets..."
+    
+    spawn(function()
+        UltimateAnalyzer:ScanVulnerabilities()
+    end)
+end)
+
+HTTPPlayBtn.MouseButton1Click:Connect(function()
+    HTTPMonitor:StartMonitoring()
+    HTTPStatusLabel.Text = "Status: Monitoring... (" .. #HTTPMonitor.Requests .. " requests)"
+    HTTPPlayBtn.BackgroundColor3 = Color3.fromRGB(100, 150, 100)
+end)
+
+HTTPStopBtn.MouseButton1Click:Connect(function()
+    HTTPMonitor:StopMonitoring()
+    HTTPStatusLabel.Text = "Status: Stopped (" .. #HTTPMonitor.Requests .. " requests found)"
+    HTTPPlayBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+    updateHTTPResults()
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+    ScreenGui:Destroy()
+end)
+
+EditorCloseBtn.MouseButton1Click:Connect(function()
+    EditorFrame.Visible = false
+end)
+
+-- ==================== UPDATE FUNCTIONS ====================
+
+function GUI_UpdateScanProgress(count)
+    StatusLabel.Text = "Scanned: " .. count .. " objects..."
+    -- Progress will be updated by scan function
+end
+
+function GUI_ScanComplete()
+    ScanBtn.Text = "🔎 START DEEP SCAN"
+    ScanBtn.BackgroundColor3 = Color3.fromRGB(60, 120, 220)
+    ProgressFill.Size = UDim2.new(1, 0, 1, 0)
+    StatusLabel.Text = "Scan complete! Found " .. UltimateAnalyzer.Results.TotalVulnerabilities .. " vulnerabilities"
+    
+    -- Update stats
+    LowStat.Count.Text = tostring(#UltimateAnalyzer.Results.Low)
+    MedStat.Count.Text = tostring(#UltimateAnalyzer.Results.Medium)
+    HighStat.Count.Text = tostring(#UltimateAnalyzer.Results.High)
+    
+    -- Update tabs
+    updateVulnTabs()
+end
+
+function updateVulnTabs()
+    -- Clear tabs
+    for _, tabName in pairs({"Low", "Med", "High"}) do
+        local content = tabContents[tabName]
+        for _, child in pairs(content:GetChildren()) do
+            if not child:IsA("UIListLayout") then
+                child:Destroy()
+            end
+        end
+    end
+    
+    -- Update Low tab
+    for _, vuln in pairs(UltimateAnalyzer.Results.Low) do
+        createVulnCard(vuln, tabContents["Low"])
+    end
+    
+    -- Update Medium tab
+    for _, vuln in pairs(UltimateAnalyzer.Results.Medium) do
+        createVulnCard(vuln, tabContents["Med"])
+    end
+    
+    -- Update High tab
+    for _, vuln in pairs(UltimateAnalyzer.Results.High) do
+        createVulnCard(vuln, tabContents["High"])
+    end
+end
+
+function updateHTTPResults()
+    -- Clear results
+    for _, child in pairs(HTTPResultsScroll:GetChildren()) do
+        if not child:IsA("UIListLayout") then
+            child:Destroy()
+        end
+    end
+    
+    -- Show results
+    for _, req in pairs(HTTPMonitor.Requests) do
+        local card = Instance.new("Frame")
+        card.Size = UDim2.new(1, 0, 0, math.floor(150 * guiScale))
+        card.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+        card.Parent = HTTPResultsScroll
+        
+        local cardCorner = Instance.new("UICorner")
+        cardCorner.CornerRadius = UDim.new(0, 10)
+        cardCorner.Parent = card
+        
+        local typeLabel = Instance.new("TextLabel")
+        typeLabel.Size = UDim2.new(1, -10, 0, math.floor(25 * guiScale))
+        typeLabel.Position = UDim2.new(0, 5, 0, 5)
+        typeLabel.BackgroundTransparency = 1
+        typeLabel.Text = req.Type .. " Request"
+        typeLabel.TextColor3 = Color3.fromRGB(100, 180, 255)
+        typeLabel.TextSize = math.floor(13 * guiScale)
+        typeLabel.Font = Enum.Font.GothamBold
+        typeLabel.TextXAlignment = Enum.TextXAlignment.Left
+        typeLabel.Parent = card
+        
+        local urlLabel = Instance.new("TextLabel")
+        urlLabel.Size = UDim2.new(1, -10, 0, math.floor(40 * guiScale))
+        urlLabel.Position = UDim2.new(0, 5, 0, math.floor(30 * guiScale))
+        urlLabel.BackgroundTransparency = 1
+        urlLabel.Text = "URL: " .. req.URL
+        urlLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+        urlLabel.TextSize = math.floor(11 * guiScale)
+        urlLabel.Font = Enum.Font.Code
+        urlLabel.TextWrapped = true
+        urlLabel.TextXAlignment = Enum.TextXAlignment.Left
+        urlLabel.Parent = card
+        
+        local scriptLabel = Instance.new("TextLabel")
+        scriptLabel.Size = UDim2.new(1, -10, 0, math.floor(30 * guiScale))
+        scriptLabel.Position = UDim2.new(0, 5, 0, math.floor(70 * guiScale))
+        scriptLabel.BackgroundTransparency = 1
+        scriptLabel.Text = "Script: " .. req.Script
+        scriptLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+        scriptLabel.TextSize = math.floor(10 * guiScale)
+        scriptLabel.Font = Enum.Font.Code
+        scriptLabel.TextWrapped = true
+        scriptLabel.TextXAlignment = Enum.TextXAlignment.Left
+        scriptLabel.Parent = card
+        
+        -- Copy button
+        local copyBtn = Instance.new("TextButton")
+        copyBtn.Size = UDim2.new(0, math.floor(100 * guiScale), 0, math.floor(30 * guiScale))
+        copyBtn.Position = UDim2.new(0, 5, 1, -math.floor(35 * guiScale))
+        copyBtn.BackgroundColor3 = Color3.fromRGB(60, 120, 220)
+        copyBtn.Text = "📋 COPY URL"
+        copyBtn.TextColor3 = Color3.new(1, 1, 1)
+        copyBtn.TextSize = math.floor(11 * guiScale)
+        copyBtn.Font = Enum.Font.GothamBold
+        copyBtn.Parent = card
+        
+        local copyCorner = Instance.new("UICorner")
+        copyCorner.CornerRadius = UDim.new(0, 6)
+        copyCorner.Parent = copyBtn
+        
+        copyBtn.MouseButton1Click:Connect(function()
+            setclipboard(req.URL)
+            copyBtn.Text = "✅ COPIED"
+            wait(1)
+            copyBtn.Text = "📋 COPY URL"
+        end)
+        
+        -- Show script button
+        if req.ScriptContent then
+            local scriptBtn = Instance.new("TextButton")
+            scriptBtn.Size = UDim2.new(0, math.floor(100 * guiScale), 0, math.floor(30 * guiScale))
+            scriptBtn.Position = UDim2.new(1, -math.floor(105 * guiScale), 1, -math.floor(35 * guiScale))
+            scriptBtn.BackgroundColor3 = Color3.fromRGB(200, 150, 50)
+            scriptBtn.Text = "📄 SCRIPT"
+            scriptBtn.TextColor3 = Color3.new(1, 1, 1)
+            scriptBtn.TextSize = math.floor(11 * guiScale)
+            scriptBtn.Font = Enum.Font.GothamBold
+            scriptBtn.Parent = card
+            
+            local scriptBtnCorner = Instance.new("UICorner")
+            scriptBtnCorner.CornerRadius = UDim.new(0, 6)
+            scriptBtnCorner.Parent = scriptBtn
+            
+            scriptBtn.MouseButton1Click:Connect(function()
+                showScriptViewer(req.Script, req.ScriptContent)
+            end)
+        end
+    end
+end
+
+-- Script Viewer
+local ScriptViewerFrame = Instance.new("Frame")
+ScriptViewerFrame.Size = UDim2.new(0, math.floor(600 * guiScale), 0, math.floor(500 * guiScale))
+ScriptViewerFrame.Position = UDim2.new(0.5, -math.floor(300 * guiScale), 0.5, -math.floor(250 * guiScale))
+ScriptViewerFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+ScriptViewerFrame.Visible = false
+ScriptViewerFrame.Parent = ScreenGui
+
+local ScriptViewerCorner = Instance.new("UICorner")
+ScriptViewerCorner.CornerRadius = UDim.new(0, 12)
+ScriptViewerCorner.Parent = ScriptViewerFrame
+
+local ScriptViewerHeader = Instance.new("Frame")
+ScriptViewerHeader.Size = UDim2.new(1, 0, 0, math.floor(45 * guiScale))
+ScriptViewerHeader.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+ScriptViewerHeader.Parent = ScriptViewerFrame
+
+local ScriptViewerTitle = Instance.new("TextLabel")
+ScriptViewerTitle.Size = UDim2.new(1, -math.floor(50 * guiScale), 1, 0)
+ScriptViewerTitle.Position = UDim2.new(0, 10, 0, 0)
+ScriptViewerTitle.BackgroundTransparency = 1
+ScriptViewerTitle.Text = "📄 SCRIPT VIEWER"
+ScriptViewerTitle.TextColor3 = Color3.new(1, 1, 1)
+ScriptViewerTitle.TextSize = math.floor(16 * guiScale)
+ScriptViewerTitle.Font = Enum.Font.GothamBold
+ScriptViewerTitle.TextXAlignment = Enum.TextXAlignment.Left
+ScriptViewerTitle.Parent = ScriptViewerHeader
+
+local ScriptViewerCloseBtn = Instance.new("TextButton")
+ScriptViewerCloseBtn.Size = UDim2.new(0, math.floor(35 * guiScale), 0, math.floor(35 * guiScale))
+ScriptViewerCloseBtn.Position = UDim2.new(1, -math.floor(40 * guiScale), 0, 5)
+ScriptViewerCloseBtn.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+ScriptViewerCloseBtn.Text = "✕"
+ScriptViewerCloseBtn.TextColor3 = Color3.new(1, 1, 1)
+ScriptViewerCloseBtn.TextSize = math.floor(16 * guiScale)
+ScriptViewerCloseBtn.Font = Enum.Font.GothamBold
+ScriptViewerCloseBtn.Parent = ScriptViewerHeader
+
+local ScriptViewerCloseCorner = Instance.new("UICorner")
+ScriptViewerCloseCorner.CornerRadius = UDim.new(0, 8)
+ScriptViewerCloseCorner.Parent = ScriptViewerCloseBtn
+
+local ScriptViewerScroll = Instance.new("ScrollingFrame")
+ScriptViewerScroll.Size = UDim2.new(1, -20, 1, -math.floor(50 * guiScale))
+ScriptViewerScroll.Position = UDim2.new(0, 10, 0, math.floor(50 * guiScale))
+ScriptViewerScroll.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+ScriptViewerScroll.BorderSizePixel = 0
+ScriptViewerScroll.ScrollBarThickness = 6
+ScriptViewerScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+ScriptViewerScroll.Parent = ScriptViewerFrame
+
+local ScriptViewerText = Instance.new("TextLabel")
+ScriptViewerText.Size = UDim2.new(1, -10, 1, -10)
+ScriptViewerText.Position = UDim2.new(0, 5, 0, 5)
+ScriptViewerText.BackgroundTransparency = 1
+ScriptViewerText.Text = ""
+ScriptViewerText.TextColor3 = Color3.fromRGB(200, 200, 200)
+ScriptViewerText.TextSize = math.floor(11 * guiScale)
+ScriptViewerText.Font = Enum.Font.Code
+ScriptViewerText.TextXAlignment = Enum.TextXAlignment.Left
+ScriptViewerText.TextYAlignment = Enum.TextYAlignment.Top
+ScriptViewerText.TextWrapped = true
+ScriptViewerText.TextScaled = false
+ScriptViewerText.Parent = ScriptViewerScroll
+
+ScriptViewerText:GetPropertyChangedSignal("TextBounds"):Connect(function()
+    ScriptViewerScroll.CanvasSize = UDim2.new(0, 0, 0, ScriptViewerText.TextBounds.Y + 20)
+end)
+
+function showScriptViewer(scriptName, scriptContent)
+    ScriptViewerTitle.Text = "📄 " .. scriptName
+    ScriptViewerText.Text = scriptContent or "No script content available"
+    ScriptViewerFrame.Visible = true
+end
+
+ScriptViewerCloseBtn.MouseButton1Click:Connect(function()
+    ScriptViewerFrame.Visible = false
+end)
+
+-- Auto-update HTTP status
+spawn(function()
+    while true do
+        if HTTPMonitor.IsMonitoring then
+            HTTPStatusLabel.Text = "Status: Monitoring... (" .. #HTTPMonitor.Requests .. " requests)"
+            updateHTTPResults()
+        end
+        wait(1)
+    end
+end)
+
+print("[ULTIMATE ANALYZER] Loaded! Version 4.0")
+print("[FEATURES] ✓ Full GUI (Delta Android Compatible)")
+print("[FEATURES] ✓ Deep Scan ALL Assets")
+print("[FEATURES] ✓ Smart Vulnerability Detection")
+print("[FEATURES] ✓ Edit Value & Execute")
+print("[FEATURES] ✓ HTTP Request Monitor")
