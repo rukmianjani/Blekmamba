@@ -1,0 +1,1143 @@
+-- Roblox Remote Exploit Scanner - Server-Side Tool
+-- Advanced Remote Event/Function Scanner & Tester
+-- Compatible with Delta Android & PC Executors
+
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+
+-- Advanced GUI Library
+local Library = {}
+Library.MainFrame = nil
+Library.Minimized = false
+
+-- Data Storage
+local RemoteData = {
+    RemoteEvents = {},
+    RemoteFunctions = {},
+    SpiedCalls = {},
+    VulnerableRemotes = {},
+    TestResults = {}
+}
+
+local RemoteSpy = {
+    Active = false,
+    Hooks = {}
+}
+
+-- Notification System
+local function Notify(title, message, duration)
+    local NotifFrame = Instance.new("Frame")
+    NotifFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+    NotifFrame.BorderSizePixel = 0
+    NotifFrame.Size = UDim2.new(0, 300, 0, 80)
+    NotifFrame.Position = UDim2.new(1, -320, 1, -100)
+    NotifFrame.Parent = Library.MainFrame.Parent
+    
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, 10)
+    Corner.Parent = NotifFrame
+    
+    local TitleLabel = Instance.new("TextLabel")
+    TitleLabel.BackgroundTransparency = 1
+    TitleLabel.Size = UDim2.new(1, -10, 0, 25)
+    TitleLabel.Position = UDim2.new(0, 5, 0, 5)
+    TitleLabel.Font = Enum.Font.GothamBold
+    TitleLabel.Text = title
+    TitleLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
+    TitleLabel.TextSize = 14
+    TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    TitleLabel.Parent = NotifFrame
+    
+    local MessageLabel = Instance.new("TextLabel")
+    MessageLabel.BackgroundTransparency = 1
+    MessageLabel.Size = UDim2.new(1, -10, 0, 45)
+    MessageLabel.Position = UDim2.new(0, 5, 0, 30)
+    MessageLabel.Font = Enum.Font.Gotham
+    MessageLabel.Text = message
+    MessageLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+    MessageLabel.TextSize = 12
+    MessageLabel.TextXAlignment = Enum.TextXAlignment.Left
+    MessageLabel.TextYAlignment = Enum.TextYAlignment.Top
+    MessageLabel.TextWrapped = true
+    MessageLabel.Parent = NotifFrame
+    
+    NotifFrame:TweenPosition(UDim2.new(1, -320, 1, -100), "Out", "Quad", 0.5, true)
+    
+    task.delay(duration or 3, function()
+        NotifFrame:TweenPosition(UDim2.new(1, 10, 1, -100), "In", "Quad", 0.5, true)
+        task.wait(0.5)
+        NotifFrame:Destroy()
+    end)
+end
+
+-- Create Advanced GUI
+function Library:CreateGUI()
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "RemoteExploitScanner"
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    
+    pcall(function()
+        ScreenGui.Parent = CoreGui
+    end)
+    if not ScreenGui.Parent then
+        ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    end
+    
+    -- Main Frame
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Name = "MainFrame"
+    MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+    MainFrame.BorderSizePixel = 0
+    MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    MainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+    MainFrame.Size = UDim2.new(0, 750, 0, 550)
+    MainFrame.Parent = ScreenGui
+    MainFrame.ClipsDescendants = true
+    
+    -- Auto-resize for mobile
+    if UserInputService.TouchEnabled then
+        MainFrame.Size = UDim2.new(0.95, 0, 0.85, 0)
+    end
+    
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, 15)
+    Corner.Parent = MainFrame
+    
+    -- Shadow Effect
+    local Shadow = Instance.new("ImageLabel")
+    Shadow.Name = "Shadow"
+    Shadow.BackgroundTransparency = 1
+    Shadow.Position = UDim2.new(0, -15, 0, -15)
+    Shadow.Size = UDim2.new(1, 30, 1, 30)
+    Shadow.ZIndex = 0
+    Shadow.Image = "rbxassetid://5554236805"
+    Shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+    Shadow.ImageTransparency = 0.5
+    Shadow.ScaleType = Enum.ScaleType.Slice
+    Shadow.SliceCenter = Rect.new(23, 23, 277, 277)
+    Shadow.Parent = MainFrame
+    
+    -- Title Bar
+    local TitleBar = Instance.new("Frame")
+    TitleBar.Name = "TitleBar"
+    TitleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    TitleBar.BorderSizePixel = 0
+    TitleBar.Size = UDim2.new(1, 0, 0, 45)
+    TitleBar.Parent = MainFrame
+    
+    local TitleCorner = Instance.new("UICorner")
+    TitleCorner.CornerRadius = UDim.new(0, 15)
+    TitleCorner.Parent = TitleBar
+    
+    local TitleCover = Instance.new("Frame")
+    TitleCover.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    TitleCover.BorderSizePixel = 0
+    TitleCover.Position = UDim2.new(0, 0, 1, -15)
+    TitleCover.Size = UDim2.new(1, 0, 0, 15)
+    TitleCover.Parent = TitleBar
+    
+    local Title = Instance.new("TextLabel")
+    Title.BackgroundTransparency = 1
+    Title.Size = UDim2.new(0, 300, 1, 0)
+    Title.Position = UDim2.new(0, 15, 0, 0)
+    Title.Font = Enum.Font.GothamBold
+    Title.Text = "SERVER-SIDE EXPLOIT SCANNER"
+    Title.TextColor3 = Color3.fromRGB(100, 200, 255)
+    Title.TextSize = 16
+    Title.TextXAlignment = Enum.TextXAlignment.Left
+    Title.Parent = TitleBar
+    
+    local Subtitle = Instance.new("TextLabel")
+    Subtitle.BackgroundTransparency = 1
+    Subtitle.Size = UDim2.new(0, 200, 0, 15)
+    Subtitle.Position = UDim2.new(0, 15, 1, -18)
+    Subtitle.Font = Enum.Font.Gotham
+    Subtitle.Text = "Remote Event/Function Analyzer"
+    Subtitle.TextColor3 = Color3.fromRGB(150, 150, 170)
+    Subtitle.TextSize = 10
+    Subtitle.TextXAlignment = Enum.TextXAlignment.Left
+    Subtitle.Parent = TitleBar
+    
+    -- Minimize Button
+    local MinimizeButton = Instance.new("TextButton")
+    MinimizeButton.Name = "MinimizeButton"
+    MinimizeButton.BackgroundColor3 = Color3.fromRGB(255, 180, 50)
+    MinimizeButton.BorderSizePixel = 0
+    MinimizeButton.Size = UDim2.new(0, 35, 0, 35)
+    MinimizeButton.Position = UDim2.new(1, -85, 0, 5)
+    MinimizeButton.Font = Enum.Font.GothamBold
+    MinimizeButton.Text = "-"
+    MinimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    MinimizeButton.TextSize = 20
+    MinimizeButton.Parent = TitleBar
+    
+    local MinCorner = Instance.new("UICorner")
+    MinCorner.CornerRadius = UDim.new(0, 8)
+    MinCorner.Parent = MinimizeButton
+    
+    -- Close Button
+    local CloseButton = Instance.new("TextButton")
+    CloseButton.Name = "CloseButton"
+    CloseButton.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
+    CloseButton.BorderSizePixel = 0
+    CloseButton.Size = UDim2.new(0, 35, 0, 35)
+    CloseButton.Position = UDim2.new(1, -45, 0, 5)
+    CloseButton.Font = Enum.Font.GothamBold
+    CloseButton.Text = "X"
+    CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    CloseButton.TextSize = 16
+    CloseButton.Parent = TitleBar
+    
+    local CloseCorner = Instance.new("UICorner")
+    CloseCorner.CornerRadius = UDim.new(0, 8)
+    CloseCorner.Parent = CloseButton
+    
+    -- Minimize/Maximize Functionality
+    MinimizeButton.MouseButton1Click:Connect(function()
+        self.Minimized = not self.Minimized
+        if self.Minimized then
+            MainFrame:TweenSize(UDim2.new(0, 300, 0, 45), "Out", "Quad", 0.3, true)
+            MinimizeButton.Text = "+"
+            Notify("Minimized", "GUI has been minimized", 2)
+        else
+            if UserInputService.TouchEnabled then
+                MainFrame:TweenSize(UDim2.new(0.95, 0, 0.85, 0), "Out", "Quad", 0.3, true)
+            else
+                MainFrame:TweenSize(UDim2.new(0, 750, 0, 550), "Out", "Quad", 0.3, true)
+            end
+            MinimizeButton.Text = "-"
+        end
+    end)
+    
+    CloseButton.MouseButton1Click:Connect(function()
+        ScreenGui:Destroy()
+        for _, hook in pairs(RemoteSpy.Hooks) do
+            if hook.Disconnect then
+                hook:Disconnect()
+            end
+        end
+        Notify("Closed", "Remote Scanner closed", 2)
+    end)
+    
+    -- Make Draggable
+    local dragging, dragInput, dragStart, startPos
+    
+    TitleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = MainFrame.Position
+            
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    
+    TitleBar.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    
+    -- Tab Container
+    local TabContainer = Instance.new("Frame")
+    TabContainer.Name = "TabContainer"
+    TabContainer.BackgroundColor3 = Color3.fromRGB(25, 25, 38)
+    TabContainer.BorderSizePixel = 0
+    TabContainer.Position = UDim2.new(0, 0, 0, 45)
+    TabContainer.Size = UDim2.new(0, 160, 1, -45)
+    TabContainer.Parent = MainFrame
+    
+    local TabList = Instance.new("UIListLayout")
+    TabList.Parent = TabContainer
+    TabList.SortOrder = Enum.SortOrder.LayoutOrder
+    TabList.Padding = UDim.new(0, 5)
+    
+    local TabPadding = Instance.new("UIPadding")
+    TabPadding.PaddingTop = UDim.new(0, 10)
+    TabPadding.PaddingLeft = UDim.new(0, 8)
+    TabPadding.PaddingRight = UDim.new(0, 8)
+    TabPadding.Parent = TabContainer
+    
+    -- Content Area
+    local ContentArea = Instance.new("Frame")
+    ContentArea.Name = "ContentArea"
+    ContentArea.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
+    ContentArea.BorderSizePixel = 0
+    ContentArea.Position = UDim2.new(0, 165, 0, 50)
+    ContentArea.Size = UDim2.new(1, -170, 1, -55)
+    ContentArea.Parent = MainFrame
+    
+    local ContentCorner = Instance.new("UICorner")
+    ContentCorner.CornerRadius = UDim.new(0, 10)
+    ContentCorner.Parent = ContentArea
+    
+    self.MainFrame = MainFrame
+    self.TabContainer = TabContainer
+    self.ContentArea = ContentArea
+    
+    return self
+end
+
+-- Create Tab
+function Library:CreateTab(name, icon)
+    local TabButton = Instance.new("TextButton")
+    TabButton.Name = name .. "Tab"
+    TabButton.BackgroundColor3 = Color3.fromRGB(35, 35, 55)
+    TabButton.BorderSizePixel = 0
+    TabButton.Size = UDim2.new(1, 0, 0, 42)
+    TabButton.Font = Enum.Font.GothamSemibold
+    TabButton.Text = "  " .. icon .. "  " .. name
+    TabButton.TextColor3 = Color3.fromRGB(180, 180, 200)
+    TabButton.TextSize = 13
+    TabButton.TextXAlignment = Enum.TextXAlignment.Left
+    TabButton.Parent = self.TabContainer
+    
+    local TabCorner = Instance.new("UICorner")
+    TabCorner.CornerRadius = UDim.new(0, 8)
+    TabCorner.Parent = TabButton
+    
+    local TabContent = Instance.new("ScrollingFrame")
+    TabContent.Name = name .. "Content"
+    TabContent.BackgroundTransparency = 1
+    TabContent.BorderSizePixel = 0
+    TabContent.Size = UDim2.new(1, -15, 1, -15)
+    TabContent.Position = UDim2.new(0, 7, 0, 7)
+    TabContent.CanvasSize = UDim2.new(0, 0, 3, 0)
+    TabContent.ScrollBarThickness = 8
+    TabContent.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 150)
+    TabContent.Visible = false
+    TabContent.Parent = self.ContentArea
+    
+    local ListLayout = Instance.new("UIListLayout")
+    ListLayout.Parent = TabContent
+    ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    ListLayout.Padding = UDim.new(0, 10)
+    
+    TabButton.MouseButton1Click:Connect(function()
+        for _, child in pairs(self.ContentArea:GetChildren()) do
+            if child:IsA("ScrollingFrame") then
+                child.Visible = false
+            end
+        end
+        TabContent.Visible = true
+        
+        for _, btn in pairs(self.TabContainer:GetChildren()) do
+            if btn:IsA("TextButton") then
+                btn.BackgroundColor3 = Color3.fromRGB(35, 35, 55)
+                btn.TextColor3 = Color3.fromRGB(180, 180, 200)
+            end
+        end
+        TabButton.BackgroundColor3 = Color3.fromRGB(50, 100, 180)
+        TabButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    end)
+    
+    return TabContent
+end
+
+-- Create Button
+function Library:CreateButton(parent, text, color, callback)
+    local Button = Instance.new("TextButton")
+    Button.BackgroundColor3 = color or Color3.fromRGB(50, 120, 200)
+    Button.BorderSizePixel = 0
+    Button.Size = UDim2.new(1, -10, 0, 38)
+    Button.Font = Enum.Font.GothamSemibold
+    Button.Text = text
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.TextSize = 13
+    Button.Parent = parent
+    
+    local ButtonCorner = Instance.new("UICorner")
+    ButtonCorner.CornerRadius = UDim.new(0, 8)
+    ButtonCorner.Parent = Button
+    
+    Button.MouseEnter:Connect(function()
+        Button.BackgroundColor3 = Color3.fromRGB(
+            math.min(255, Button.BackgroundColor3.R * 255 + 20),
+            math.min(255, Button.BackgroundColor3.G * 255 + 20),
+            math.min(255, Button.BackgroundColor3.B * 255 + 20)
+        )
+    end)
+    
+    Button.MouseLeave:Connect(function()
+        Button.BackgroundColor3 = color or Color3.fromRGB(50, 120, 200)
+    end)
+    
+    Button.MouseButton1Click:Connect(callback)
+    
+    return Button
+end
+
+-- Create Label
+function Library:CreateLabel(parent, text, color)
+    local Label = Instance.new("TextLabel")
+    Label.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    Label.BorderSizePixel = 0
+    Label.Size = UDim2.new(1, -10, 0, 32)
+    Label.Font = Enum.Font.Gotham
+    Label.Text = text
+    Label.TextColor3 = color or Color3.fromRGB(220, 220, 220)
+    Label.TextSize = 12
+    Label.TextWrapped = true
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.Parent = parent
+    
+    local LabelCorner = Instance.new("UICorner")
+    LabelCorner.CornerRadius = UDim.new(0, 6)
+    LabelCorner.Parent = Label
+    
+    local Padding = Instance.new("UIPadding")
+    Padding.PaddingLeft = UDim.new(0, 10)
+    Padding.PaddingRight = UDim.new(0, 10)
+    Padding.Parent = Label
+    
+    return Label
+end
+
+-- Create Input Box
+function Library:CreateInput(parent, placeholder, callback)
+    local InputFrame = Instance.new("Frame")
+    InputFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    InputFrame.BorderSizePixel = 0
+    InputFrame.Size = UDim2.new(1, -10, 0, 38)
+    InputFrame.Parent = parent
+    
+    local InputCorner = Instance.new("UICorner")
+    InputCorner.CornerRadius = UDim.new(0, 8)
+    InputCorner.Parent = InputFrame
+    
+    local InputBox = Instance.new("TextBox")
+    InputBox.BackgroundTransparency = 1
+    InputBox.Size = UDim2.new(1, -20, 1, 0)
+    InputBox.Position = UDim2.new(0, 10, 0, 0)
+    InputBox.Font = Enum.Font.Gotham
+    InputBox.PlaceholderText = placeholder
+    InputBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 140)
+    InputBox.Text = ""
+    InputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    InputBox.TextSize = 12
+    InputBox.TextXAlignment = Enum.TextXAlignment.Left
+    InputBox.Parent = InputFrame
+    
+    if callback then
+        InputBox.FocusLost:Connect(function()
+            callback(InputBox.Text)
+        end)
+    end
+    
+    return InputBox
+end
+
+-- Scan All Remote Events/Functions
+function ScanRemotes()
+    RemoteData.RemoteEvents = {}
+    RemoteData.RemoteFunctions = {}
+    
+    local function ScanInstance(instance, path)
+        for _, child in pairs(instance:GetChildren()) do
+            pcall(function()
+                local childPath = path .. "/" .. child.Name
+                
+                if child:IsA("RemoteEvent") then
+                    table.insert(RemoteData.RemoteEvents, {
+                        Name = child.Name,
+                        Path = childPath,
+                        Instance = child,
+                        Parent = instance.Name
+                    })
+                elseif child:IsA("RemoteFunction") then
+                    table.insert(RemoteData.RemoteFunctions, {
+                        Name = child.Name,
+                        Path = childPath,
+                        Instance = child,
+                        Parent = instance.Name
+                    })
+                end
+                
+                ScanInstance(child, childPath)
+            end)
+        end
+    end
+    
+    local locations = {
+        game:GetService("Workspace"),
+        game:GetService("ReplicatedStorage"),
+        game:GetService("ReplicatedFirst"),
+        LocalPlayer:FindFirstChild("PlayerGui"),
+        LocalPlayer:FindFirstChild("Backpack")
+    }
+    
+    if LocalPlayer.Character then
+        table.insert(locations, LocalPlayer.Character)
+    end
+    
+    for _, location in pairs(locations) do
+        if location then
+            pcall(function()
+                ScanInstance(location, location.Name)
+            end)
+        end
+    end
+    
+    return #RemoteData.RemoteEvents + #RemoteData.RemoteFunctions
+end
+
+-- Remote Spy System
+function StartRemoteSpy()
+    if RemoteSpy.Active then return end
+    RemoteSpy.Active = true
+    RemoteData.SpiedCalls = {}
+    
+    local function HookRemote(remote, remoteType)
+        pcall(function()
+            local originalNamecall
+            originalNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+                local method = getnamecallmethod()
+                local args = {...}
+                
+                if self == remote and (method == "FireServer" or method == "InvokeServer") then
+                    local callData = {
+                        Remote = remote.Name,
+                        Type = remoteType,
+                        Method = method,
+                        Arguments = args,
+                        Time = os.date("%H:%M:%S"),
+                        Path = remote:GetFullName()
+                    }
+                    
+                    table.insert(RemoteData.SpiedCalls, callData)
+                    
+                    if #RemoteData.RemoteFunctions == 0 then
+        Library:CreateLabel(ScannerTab, "ℹ️ No RemoteFunctions found. Run scan first!", Color3.fromRGB(255, 200, 100))
+    else
+        for _, remote in pairs(RemoteData.RemoteFunctions) do
+            local label = Library:CreateLabel(ScannerTab, string.format("🟣 %s\n   Path: %s", remote.Name, remote.Path), Color3.fromRGB(200, 100, 255))
+            label.Name = "RemoteItem"
+            label.Size = UDim2.new(1, -10, 0, 45)
+        end
+    end
+end)
+
+-- Tab 2: Remote Spy
+local SpyTab = Library:CreateTab("Remote Spy", "👁️")
+Library:CreateLabel(SpyTab, "Monitor all Remote calls in real-time", Color3.fromRGB(100, 200, 255))
+
+Library:CreateButton(SpyTab, "▶️ START REMOTE SPY", Color3.fromRGB(50, 200, 100), function()
+    if not RemoteSpy.Active then
+        StartRemoteSpy()
+        Library:CreateLabel(SpyTab, "✅ Remote Spy is now ACTIVE", Color3.fromRGB(100, 255, 100))
+        Notify("Remote Spy", "Started monitoring all remotes", 3)
+    else
+        Library:CreateLabel(SpyTab, "⚠️ Remote Spy already running!", Color3.fromRGB(255, 200, 100))
+    end
+end)
+
+Library:CreateButton(SpyTab, "⏹️ STOP REMOTE SPY", Color3.fromRGB(220, 100, 50), function()
+    if RemoteSpy.Active then
+        StopRemoteSpy()
+        Library:CreateLabel(SpyTab, "❌ Remote Spy STOPPED", Color3.fromRGB(255, 100, 100))
+        Notify("Remote Spy", "Stopped monitoring", 2)
+    else
+        Library:CreateLabel(SpyTab, "ℹ️ Remote Spy is not running", Color3.fromRGB(200, 200, 200))
+    end
+end)
+
+Library:CreateButton(SpyTab, "📊 SHOW CAPTURED CALLS", Color3.fromRGB(100, 150, 255), function()
+    for _, child in pairs(SpyTab:GetChildren()) do
+        if child.Name == "SpyItem" then
+            child:Destroy()
+        end
+    end
+    
+    if #RemoteData.SpiedCalls == 0 then
+        Library:CreateLabel(SpyTab, "ℹ️ No calls captured yet", Color3.fromRGB(200, 200, 200))
+    else
+        Library:CreateLabel(SpyTab, string.format("📊 Total Captured: %d calls", #RemoteData.SpiedCalls), Color3.fromRGB(100, 255, 200))
+        
+        for i = #RemoteData.SpiedCalls, math.max(1, #RemoteData.SpiedCalls - 20), -1 do
+            local call = RemoteData.SpiedCalls[i]
+            local argsText = ""
+            
+            for _, arg in pairs(call.Arguments) do
+                argsText = argsText .. tostring(arg) .. ", "
+            end
+            argsText = argsText:sub(1, -3)
+            
+            local label = Library:CreateLabel(SpyTab, string.format(
+                "[%s] %s:%s\nArgs: %s",
+                call.Time,
+                call.Remote,
+                call.Method,
+                argsText
+            ), Color3.fromRGB(200, 255, 200))
+            label.Name = "SpyItem"
+            label.Size = UDim2.new(1, -10, 0, 55)
+        end
+    end
+end)
+
+Library:CreateButton(SpyTab, "🗑️ CLEAR SPY DATA", Color3.fromRGB(150, 50, 50), function()
+    RemoteData.SpiedCalls = {}
+    for _, child in pairs(SpyTab:GetChildren()) do
+        if child.Name == "SpyItem" then
+            child:Destroy()
+        end
+    end
+    Library:CreateLabel(SpyTab, "✅ Spy data cleared", Color3.fromRGB(100, 255, 100))
+end)
+
+-- Tab 3: Vulnerability Tester
+local TesterTab = Library:CreateTab("Vuln Tester", "⚡")
+Library:CreateLabel(TesterTab, "Test remotes for vulnerabilities", Color3.fromRGB(100, 200, 255))
+
+Library:CreateButton(TesterTab, "🧪 TEST ALL REMOTES (QUICK)", Color3.fromRGB(255, 150, 50), function()
+    if #RemoteData.RemoteEvents == 0 and #RemoteData.RemoteFunctions == 0 then
+        Library:CreateLabel(TesterTab, "⚠️ No remotes found! Run scanner first", Color3.fromRGB(255, 100, 100))
+        Notify("Error", "Run scanner first!", 3)
+        return
+    end
+    
+    Notify("Testing", "Testing all remotes...", 2)
+    local tested = 0
+    
+    for _, remote in pairs(RemoteData.RemoteEvents) do
+        pcall(function()
+            TestRemote(remote, "FireEmpty")
+            tested = tested + 1
+        end)
+        task.wait(0.05)
+    end
+    
+    for _, remote in pairs(RemoteData.RemoteFunctions) do
+        pcall(function()
+            TestRemote(remote, "InvokeTest")
+            tested = tested + 1
+        end)
+        task.wait(0.05)
+    end
+    
+    Library:CreateLabel(TesterTab, string.format("✅ Tested %d remotes", tested), Color3.fromRGB(100, 255, 100))
+    Library:CreateLabel(TesterTab, string.format("🎯 Found %d vulnerable", #RemoteData.VulnerableRemotes), Color3.fromRGB(255, 200, 100))
+    Notify("Test Complete", string.format("Found %d vulnerabilities", #RemoteData.VulnerableRemotes), 3)
+end)
+
+Library:CreateButton(TesterTab, "🔥 TEST WITH EXPLOIT VALUES", Color3.fromRGB(220, 50, 50), function()
+    if #RemoteData.RemoteEvents == 0 then
+        Library:CreateLabel(TesterTab, "⚠️ No RemoteEvents found!", Color3.fromRGB(255, 100, 100))
+        return
+    end
+    
+    Notify("Exploit Test", "Testing with exploit values...", 2)
+    
+    for _, remote in pairs(RemoteData.RemoteEvents) do
+        pcall(function()
+            TestRemote(remote, "FireValues")
+        end)
+        task.wait(0.05)
+    end
+    
+    Library:CreateLabel(TesterTab, "✅ Exploit value test completed", Color3.fromRGB(100, 255, 100))
+    Notify("Test Complete", "Exploit test finished", 3)
+end)
+
+Library:CreateButton(TesterTab, "📋 SHOW VULNERABLE REMOTES", Color3.fromRGB(255, 100, 100), function()
+    for _, child in pairs(TesterTab:GetChildren()) do
+        if child.Name == "VulnItem" then
+            child:Destroy()
+        end
+    end
+    
+    if #RemoteData.VulnerableRemotes == 0 then
+        Library:CreateLabel(TesterTab, "ℹ️ No vulnerabilities found yet", Color3.fromRGB(200, 200, 200))
+    else
+        for _, vuln in pairs(RemoteData.VulnerableRemotes) do
+            local frame = Instance.new("Frame")
+            frame.Name = "VulnItem"
+            frame.BackgroundColor3 = Color3.fromRGB(50, 30, 30)
+            frame.BorderSizePixel = 0
+            frame.Size = UDim2.new(1, -10, 0, 90)
+            frame.Parent = TesterTab
+            
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(0, 8)
+            corner.Parent = frame
+            
+            local nameLabel = Instance.new("TextLabel")
+            nameLabel.BackgroundTransparency = 1
+            nameLabel.Size = UDim2.new(1, -10, 0, 20)
+            nameLabel.Position = UDim2.new(0, 5, 0, 5)
+            nameLabel.Font = Enum.Font.GothamBold
+            nameLabel.Text = "🔴 VULNERABLE: " .. vuln.Remote.Name
+            nameLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+            nameLabel.TextSize = 13
+            nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+            nameLabel.Parent = frame
+            
+            local infoLabel = Instance.new("TextLabel")
+            infoLabel.BackgroundTransparency = 1
+            infoLabel.Size = UDim2.new(1, -10, 0, 40)
+            infoLabel.Position = UDim2.new(0, 5, 0, 25)
+            infoLabel.Font = Enum.Font.Gotham
+            infoLabel.Text = string.format(
+                "Test: %s\nPath: %s\nTime: %s",
+                vuln.TestType,
+                vuln.Remote.Path,
+                vuln.Time
+            )
+            infoLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+            infoLabel.TextSize = 11
+            infoLabel.TextXAlignment = Enum.TextXAlignment.Left
+            infoLabel.TextYAlignment = Enum.TextYAlignment.Top
+            infoLabel.TextWrapped = true
+            infoLabel.Parent = frame
+            
+            local exploitBtn = Instance.new("TextButton")
+            exploitBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            exploitBtn.BorderSizePixel = 0
+            exploitBtn.Size = UDim2.new(0, 90, 0, 22)
+            exploitBtn.Position = UDim2.new(1, -95, 1, -27)
+            exploitBtn.Font = Enum.Font.GothamBold
+            exploitBtn.Text = "EXPLOIT"
+            exploitBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            exploitBtn.TextSize = 11
+            exploitBtn.Parent = frame
+            
+            local btnCorner = Instance.new("UICorner")
+            btnCorner.CornerRadius = UDim.new(0, 5)
+            btnCorner.Parent = exploitBtn
+            
+            exploitBtn.MouseButton1Click:Connect(function()
+                pcall(function()
+                    if vuln.Remote.Instance:IsA("RemoteEvent") then
+                        vuln.Remote.Instance:FireServer(999999)
+                        vuln.Remote.Instance:FireServer("Money", 999999)
+                        vuln.Remote.Instance:FireServer({Money = 999999, Level = 999, Gems = 999999})
+                    end
+                end)
+                Notify("Exploited", "Sent exploit payload to " .. vuln.Remote.Name, 3)
+            end)
+        end
+    end
+end)
+
+-- Tab 4: Parameter Fuzzer
+local FuzzerTab = Library:CreateTab("Fuzzer", "🎯")
+Library:CreateLabel(FuzzerTab, "Advanced parameter fuzzing", Color3.fromRGB(100, 200, 255))
+
+local fuzzerIterations = 1
+Library:CreateLabel(FuzzerTab, "Set fuzzer iterations:", Color3.fromRGB(200, 200, 200))
+local iterInput = Library:CreateInput(FuzzerTab, "Enter iterations (1-10)", function(text)
+    local num = tonumber(text)
+    if num and num >= 1 and num <= 10 then
+        fuzzerIterations = num
+        Library:CreateLabel(FuzzerTab, "✅ Set to " .. num .. " iterations", Color3.fromRGB(100, 255, 100))
+    else
+        Library:CreateLabel(FuzzerTab, "⚠️ Invalid number (use 1-10)", Color3.fromRGB(255, 100, 100))
+    end
+end)
+
+Library:CreateButton(FuzzerTab, "🎯 FUZZ ALL REMOTES", Color3.fromRGB(255, 150, 50), function()
+    if #RemoteData.RemoteEvents == 0 then
+        Library:CreateLabel(FuzzerTab, "⚠️ No remotes to fuzz!", Color3.fromRGB(255, 100, 100))
+        return
+    end
+    
+    Notify("Fuzzing", "Starting parameter fuzzer...", 2)
+    Library:CreateLabel(FuzzerTab, "🔄 Fuzzing in progress...", Color3.fromRGB(255, 200, 100))
+    
+    local totalSuccess = 0
+    local remotesProcessed = 0
+    
+    for _, remote in pairs(RemoteData.RemoteEvents) do
+        pcall(function()
+            local success = FuzzRemote(remote, fuzzerIterations)
+            totalSuccess = totalSuccess + success
+            remotesProcessed = remotesProcessed + 1
+        end)
+        task.wait(0.1)
+    end
+    
+    Library:CreateLabel(FuzzerTab, string.format("✅ Fuzzed %d remotes", remotesProcessed), Color3.fromRGB(100, 255, 100))
+    Library:CreateLabel(FuzzerTab, string.format("📊 %d successful payloads sent", totalSuccess), Color3.fromRGB(200, 255, 200))
+    Notify("Fuzzing Complete", string.format("%d payloads sent", totalSuccess), 3)
+end)
+
+Library:CreateButton(FuzzerTab, "💰 FUZZ MONEY REMOTES ONLY", Color3.fromRGB(255, 200, 50), function()
+    local moneyKeywords = {"money", "cash", "gold", "coin", "currency", "balance", "gem", "diamond"}
+    local found = 0
+    
+    for _, remote in pairs(RemoteData.RemoteEvents) do
+        local nameLower = remote.Name:lower()
+        for _, keyword in pairs(moneyKeywords) do
+            if nameLower:find(keyword) then
+                pcall(function()
+                    remote.Instance:FireServer(999999)
+                    remote.Instance:FireServer("Money", 999999)
+                    remote.Instance:FireServer({Amount = 999999})
+                    found = found + 1
+                end)
+                break
+            end
+        end
+    end
+    
+    Library:CreateLabel(FuzzerTab, string.format("💰 Fuzzed %d money-related remotes", found), Color3.fromRGB(255, 215, 0))
+    Notify("Money Fuzz", string.format("Targeted %d remotes", found), 3)
+end)
+
+Library:CreateButton(FuzzerTab, "📊 SHOW FUZZER STATS", Color3.fromRGB(100, 150, 255), function()
+    for _, child in pairs(FuzzerTab:GetChildren()) do
+        if child.Name == "StatItem" then
+            child:Destroy()
+        end
+    end
+    
+    if #RemoteData.TestResults == 0 then
+        Library:CreateLabel(FuzzerTab, "ℹ️ No fuzzing data yet", Color3.fromRGB(200, 200, 200))
+    else
+        local successCount = 0
+        local failCount = 0
+        
+        for _, result in pairs(RemoteData.TestResults) do
+            if result.Results.Success then
+                successCount = successCount + 1
+            else
+                failCount = failCount + 1
+            end
+        end
+        
+        local label1 = Library:CreateLabel(FuzzerTab, string.format("✅ Successful: %d", successCount), Color3.fromRGB(100, 255, 100))
+        label1.Name = "StatItem"
+        
+        local label2 = Library:CreateLabel(FuzzerTab, string.format("❌ Failed: %d", failCount), Color3.fromRGB(255, 100, 100))
+        label2.Name = "StatItem"
+        
+        local label3 = Library:CreateLabel(FuzzerTab, string.format("🎯 Total Tests: %d", #RemoteData.TestResults), Color3.fromRGB(200, 200, 255))
+        label3.Name = "StatItem"
+    end
+end)
+
+-- Tab 5: Custom Executor
+local ExecutorTab = Library:CreateTab("Executor", "⚙️")
+Library:CreateLabel(ExecutorTab, "Execute custom remote calls", Color3.fromRGB(100, 200, 255))
+
+local selectedRemote = nil
+Library:CreateLabel(ExecutorTab, "Select a remote to execute:", Color3.fromRGB(200, 200, 200))
+
+local remoteInput = Library:CreateInput(ExecutorTab, "Enter remote name", function(text)
+    for _, remote in pairs(RemoteData.RemoteEvents) do
+        if remote.Name == text then
+            selectedRemote = remote
+            Library:CreateLabel(ExecutorTab, "✅ Selected: " .. text, Color3.fromRGB(100, 255, 100))
+            return
+        end
+    end
+    Library:CreateLabel(ExecutorTab, "❌ Remote not found!", Color3.fromRGB(255, 100, 100))
+end)
+
+Library:CreateButton(ExecutorTab, "🔥 FIRE: Money Exploit", Color3.fromRGB(255, 200, 50), function()
+    if not selectedRemote then
+        Library:CreateLabel(ExecutorTab, "⚠️ Select a remote first!", Color3.fromRGB(255, 100, 100))
+        return
+    end
+    
+    pcall(function()
+        selectedRemote.Instance:FireServer(999999)
+        selectedRemote.Instance:FireServer("Money", 999999)
+        selectedRemote.Instance:FireServer({Money = 999999, Cash = 999999, Gold = 999999})
+    end)
+    
+    Library:CreateLabel(ExecutorTab, "✅ Fired money exploit payload", Color3.fromRGB(100, 255, 100))
+    Notify("Executed", "Money exploit sent", 2)
+end)
+
+Library:CreateButton(ExecutorTab, "⚡ FIRE: Level Exploit", Color3.fromRGB(150, 100, 255), function()
+    if not selectedRemote then
+        Library:CreateLabel(ExecutorTab, "⚠️ Select a remote first!", Color3.fromRGB(255, 100, 100))
+        return
+    end
+    
+    pcall(function()
+        selectedRemote.Instance:FireServer(999)
+        selectedRemote.Instance:FireServer("Level", 999)
+        selectedRemote.Instance:FireServer({Level = 999, XP = 999999, Rank = 999})
+    end)
+    
+    Library:CreateLabel(ExecutorTab, "✅ Fired level exploit payload", Color3.fromRGB(100, 255, 100))
+    Notify("Executed", "Level exploit sent", 2)
+end)
+
+Library:CreateButton(ExecutorTab, "🎁 FIRE: Item Exploit", Color3.fromRGB(255, 100, 150), function()
+    if not selectedRemote then
+        Library:CreateLabel(ExecutorTab, "⚠️ Select a remote first!", Color3.fromRGB(255, 100, 100))
+        return
+    end
+    
+    pcall(function()
+        selectedRemote.Instance:FireServer("GetItem", 999)
+        selectedRemote.Instance:FireServer({ItemID = "Legendary", Amount = 999})
+        selectedRemote.Instance:FireServer("ClaimReward", true)
+    end)
+    
+    Library:CreateLabel(ExecutorTab, "✅ Fired item exploit payload", Color3.fromRGB(100, 255, 100))
+    Notify("Executed", "Item exploit sent", 2)
+end)
+
+Library:CreateButton(ExecutorTab, "📋 LIST ALL REMOTES", Color3.fromRGB(100, 150, 255), function()
+    for _, child in pairs(ExecutorTab:GetChildren()) do
+        if child.Name == "RemoteListItem" then
+            child:Destroy()
+        end
+    end
+    
+    if #RemoteData.RemoteEvents == 0 then
+        Library:CreateLabel(ExecutorTab, "ℹ️ No remotes found", Color3.fromRGB(200, 200, 200))
+    else
+        for _, remote in pairs(RemoteData.RemoteEvents) do
+            local label = Library:CreateLabel(ExecutorTab, "🔴 " .. remote.Name, Color3.fromRGB(255, 150, 150))
+            label.Name = "RemoteListItem"
+        end
+    end
+end)
+
+-- Tab 6: Info & Settings
+local InfoTab = Library:CreateTab("Info", "ℹ️")
+Library:CreateLabel(InfoTab, "SERVER-SIDE EXPLOIT SCANNER", Color3.fromRGB(100, 200, 255))
+Library:CreateLabel(InfoTab, "Version 3.0 - Advanced Edition", Color3.fromRGB(150, 150, 170))
+Library:CreateLabel(InfoTab, "", Color3.fromRGB(200, 200, 200))
+
+Library:CreateLabel(InfoTab, "✅ Remote Event Scanner", Color3.fromRGB(100, 255, 100))
+Library:CreateLabel(InfoTab, "✅ Real-time Remote Spy", Color3.fromRGB(100, 255, 100))
+Library:CreateLabel(InfoTab, "✅ Vulnerability Tester", Color3.fromRGB(100, 255, 100))
+Library:CreateLabel(InfoTab, "✅ Parameter Fuzzer", Color3.fromRGB(100, 255, 100))
+Library:CreateLabel(InfoTab, "✅ Custom Executor", Color3.fromRGB(100, 255, 100))
+Library:CreateLabel(InfoTab, "✅ Mobile & PC Compatible", Color3.fromRGB(100, 255, 100))
+Library:CreateLabel(InfoTab, "✅ Minimize Feature", Color3.fromRGB(100, 255, 100))
+
+Library:CreateLabel(InfoTab, "", Color3.fromRGB(200, 200, 200))
+Library:CreateLabel(InfoTab, "⚠️ DISCLAIMER:", Color3.fromRGB(255, 200, 100))
+Library:CreateLabel(InfoTab, "This tool is for educational purposes and security research only. Use responsibly.", Color3.fromRGB(200, 200, 200))
+
+Library:CreateButton(InfoTab, "🗑️ CLEAR ALL DATA", Color3.fromRGB(200, 50, 50), function()
+    RemoteData = {
+        RemoteEvents = {},
+        RemoteFunctions = {},
+        SpiedCalls = {},
+        VulnerableRemotes = {},
+        TestResults = {}
+    }
+    
+    StopRemoteSpy()
+    
+    Library:CreateLabel(InfoTab, "✅ All data cleared!", Color3.fromRGB(100, 255, 100))
+    Notify("Cleared", "All scan data has been cleared", 2)
+end)
+
+-- Auto-select first tab
+task.wait(0.5)
+for _, btn in pairs(Library.TabContainer:GetChildren()) do
+    if btn:IsA("TextButton") and btn.Name == "ScannerTab" then
+        btn.BackgroundColor3 = Color3.fromRGB(50, 100, 180)
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        local content = Library.ContentArea:FindFirstChild("ScannerContent")
+        if content then
+            content.Visible = true
+        end
+        break
+    end
+end
+
+print("=================================")
+print("SERVER-SIDE EXPLOIT SCANNER v3.0")
+print("=================================")
+print("✅ Advanced Remote Scanner Loaded")
+print("✅ Ready to detect vulnerabilities")
+print("=================================")
+
+Notify("Loaded", "Server-Side Exploit Scanner v3.0 Ready!", 3).SpiedCalls > 100 then
+                        table.remove(RemoteData.SpiedCalls, 1)
+                    end
+                end
+                
+                return originalNamecall(self, ...)
+            end)
+            
+            table.insert(RemoteSpy.Hooks, {Disconnect = function() end})
+        end)
+    end
+    
+    for _, remote in pairs(RemoteData.RemoteEvents) do
+        HookRemote(remote.Instance, "RemoteEvent")
+    end
+    
+    for _, remote in pairs(RemoteData.RemoteFunctions) do
+        HookRemote(remote.Instance, "RemoteFunction")
+    end
+end
+
+function StopRemoteSpy()
+    RemoteSpy.Active = false
+    for _, hook in pairs(RemoteSpy.Hooks) do
+        if hook.Disconnect then
+            pcall(function() hook:Disconnect() end)
+        end
+    end
+    RemoteSpy.Hooks = {}
+end
+
+-- Test Remote Vulnerability
+function TestRemote(remote, testType)
+    local results = {
+        Success = false,
+        Response = nil,
+        Error = nil,
+        Vulnerable = false
+    }
+    
+    pcall(function()
+        if testType == "FireEmpty" and remote.Instance:IsA("RemoteEvent") then
+            remote.Instance:FireServer()
+            results.Success = true
+            results.Response = "Fired without parameters"
+            results.Vulnerable = true
+            
+        elseif testType == "FireValues" and remote.Instance:IsA("RemoteEvent") then
+            -- Test common exploitable values
+            remote.Instance:FireServer(999999)
+            remote.Instance:FireServer("Money", 999999)
+            remote.Instance:FireServer({Money = 999999, Level = 999})
+            results.Success = true
+            results.Response = "Fired with exploit values"
+            results.Vulnerable = true
+            
+        elseif testType == "FireNegative" and remote.Instance:IsA("RemoteEvent") then
+            remote.Instance:FireServer(-999999)
+            results.Success = true
+            results.Response = "Fired with negative values"
+            results.Vulnerable = true
+            
+        elseif testType == "FireString" and remote.Instance:IsA("RemoteEvent") then
+            remote.Instance:FireServer("EXPLOIT_TEST")
+            remote.Instance:FireServer(string.rep("A", 10000))
+            results.Success = true
+            results.Response = "Fired with string payloads"
+            results.Vulnerable = true
+            
+        elseif testType == "InvokeTest" and remote.Instance:IsA("RemoteFunction") then
+            local response = remote.Instance:InvokeServer()
+            results.Success = true
+            results.Response = tostring(response)
+            results.Vulnerable = true
+        end
+    end)
+    
+    if results.Vulnerable then
+        table.insert(RemoteData.VulnerableRemotes, {
+            Remote = remote,
+            TestType = testType,
+            Results = results,
+            Time = os.date("%H:%M:%S")
+        })
+    end
+    
+    table.insert(RemoteData.TestResults, {
+        Remote = remote.Name,
+        TestType = testType,
+        Results = results
+    })
+    
+    return results
+end
+
+-- Fuzzer - Test multiple parameters
+function FuzzRemote(remote, iterations)
+    local testPayloads = {
+        999999, -999999, 0, 1, -1,
+        "Money", "Cash", "Gold", "Gems", "Admin",
+        true, false, nil,
+        {Money = 999999}, {Level = 999}, {Admin = true},
+        string.rep("A", 1000),
+        workspace, game, LocalPlayer
+    }
+    
+    local successCount = 0
+    
+    for i = 1, iterations do
+        for _, payload in pairs(testPayloads) do
+            pcall(function()
+                if remote.Instance:IsA("RemoteEvent") then
+                    remote.Instance:FireServer(payload)
+                    successCount = successCount + 1
+                elseif remote.Instance:IsA("RemoteFunction") then
+                    remote.Instance:InvokeServer(payload)
+                    successCount = successCount + 1
+                end
+            end)
+            task.wait(0.01)
+        end
+    end
+    
+    return successCount
+end
+
+-- Create GUI
+Library:CreateGUI()
+
+-- Tab 1: Remote Scanner
+local ScannerTab = Library:CreateTab("Scanner", "🔍")
+Library:CreateLabel(ScannerTab, "Scan all Remote Events and Functions", Color3.fromRGB(100, 200, 255))
+
+Library:CreateButton(ScannerTab, "🚀 SCAN ALL REMOTES", Color3.fromRGB(50, 150, 255), function()
+    local startTime = tick()
+    Notify("Scanning", "Scanning all remotes...", 2)
+    
+    local count = ScanRemotes()
+    local elapsed = math.floor((tick() - startTime) * 1000)
+    
+    Library:CreateLabel(ScannerTab, string.format("✅ Found %d RemoteEvents", #RemoteData.RemoteEvents), Color3.fromRGB(100, 255, 100))
+    Library:CreateLabel(ScannerTab, string.format("✅ Found %d RemoteFunctions", #RemoteData.RemoteFunctions), Color3.fromRGB(100, 255, 100))
+    Library:CreateLabel(ScannerTab, string.format("⏱️ Scan completed in %dms", elapsed), Color3.fromRGB(200, 200, 200))
+    
+    Notify("Scan Complete", string.format("Found %d total remotes", count), 3)
+end)
+
+Library:CreateButton(ScannerTab, "📋 LIST ALL REMOTE EVENTS", Color3.fromRGB(100, 150, 255), function()
+    for _, child in pairs(ScannerTab:GetChildren()) do
+        if child.Name == "RemoteItem" then
+            child:Destroy()
+        end
+    end
+    
+    if #RemoteData.RemoteEvents == 0 then
+        Library:CreateLabel(ScannerTab, "ℹ️ No RemoteEvents found. Run scan first!", Color3.fromRGB(255, 200, 100))
+    else
+        for _, remote in pairs(RemoteData.RemoteEvents) do
+            local label = Library:CreateLabel(ScannerTab, string.format("🔴 %s\n   Path: %s", remote.Name, remote.Path), Color3.fromRGB(255, 100, 100))
+            label.Name = "RemoteItem"
+            label.Size = UDim2.new(1, -10, 0, 45)
+        end
+    end
+end)
+
+Library:CreateButton(ScannerTab, "📋 LIST ALL REMOTE FUNCTIONS", Color3.fromRGB(150, 100, 255), function()
+    for _, child in pairs(ScannerTab:GetChildren()) do
+        if child.Name == "RemoteItem" then
+            child:Destroy()
+        end
+    end
+    
+    if #RemoteData
